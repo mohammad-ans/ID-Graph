@@ -1,0 +1,46 @@
+CREATE SPACE IF NOT EXISTS audience_graph_test(
+  vid_type = FIXED_STRING(160),
+  partition_num = 10,
+  replica_factor = 1
+);
+
+USE audience_graph_test;
+
+CREATE TAG IF NOT EXISTS record(
+  standardized_table string,
+  provider_id string,
+  source_table string,
+  record_id string,
+  transaction_id string,
+  transaction_date string,
+  primary_category string,
+  secondary_category string,
+  written bool
+);
+
+CREATE TAG IF NOT EXISTS fg_hash(
+  device_props string,
+  ip_loc string
+);
+
+CREATE TAG IF NOT EXISTS identity_no(
+  deprecated bool DEFAULT false,
+  merged_into string DEFAULT ""
+);
+
+CREATE TAG IF NOT EXISTS email(value string);
+CREATE TAG IF NOT EXISTS phone(value string);
+CREATE TAG IF NOT EXISTS maid(value string);
+
+CREATE TAG IF NOT EXISTS country(code string);
+CREATE TAG IF NOT EXISTS merchant(name string, url string);
+
+CREATE EDGE IF NOT EXISTS has_email();
+CREATE EDGE IF NOT EXISTS has_phone();
+CREATE EDGE IF NOT EXISTS has_maid();
+CREATE EDGE IF NOT EXISTS in_country();
+CREATE EDGE IF NOT EXISTS transacted_with();
+CREATE EDGE IF NOT EXISTS belongs_to(
+  start_date string,
+  end_date string
+);

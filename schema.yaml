@@ -1,0 +1,33 @@
+identifiers:
+ - name: email
+   column: hashed_email
+   pre_hashed: true
+   edge_tag: has_email
+   include_in_belongs_to: true
+ - name: phone
+   column: hashed_phone
+   pre_hashed: true
+   edge_tag: has_phone
+   include_in_belongs_to: true
+ - name: maid
+   column: maid
+   pre_hashed: false
+   edge_tag: has_maid
+   include_in_belongs_to: false
+
+signal_groups:
+ - name: device_props
+   columns: [screen_width, screen_length]
+   edge_tag: has_device
+ - name: ip_loc
+   columns: [ip_country, city, language]
+   edge_tag: has_ip
+
+passthrough:
+ - transaction_date
+ - merchant_name
+ - merchant_url
+ - source_table
+
+record_id:
+  - record_id
