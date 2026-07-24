@@ -59,7 +59,7 @@ def ensure_invalids_table(conn : _T_conn, schema_name : str, identifiers_table :
             f"""
             CREATE TABLE IF NOT EXISTS {schema_name}.{identifiers_table} (
                 identifier_type text NOT NULL,
-                identifier text text NOT NULL,
+                identifier text NOT NULL,
                 PRIMARY KEY (identifier, identifier_type)
             );
             """
@@ -88,21 +88,20 @@ def ensure_audit_table(conn : _T_conn, schema_name : str, sync_table : str):
 def fetch_invalid(conn : _T_conn, tablename : str, max_transactions : int, remap_type : int, schema_name : str, schema_cols: dict, invalid_table : str = "graph_invalid_identifiers"):
     logger.info("Getting supernode identifiers from database")
     invalid_identifiers = defaultdict(set)
+    cursor = conn.cursor()
     for identifier in schema_cols["identifiers"]:
         col = identifier["column"]
-
-        with conn.cursor() as cursor:
-            cursor.execute(
-                f"""
-                SELECT {col}
-                FROM {schema_name}.{tablename}
-                WHERE {col} IS NOT NULL
-                GROUP BY {col}
-                HAVING COUNT(*) > {max_transactions};
-                """
-            )
+        cursor.execute(
+            f"""
+            SELECT {col}
+            FROM {schema_name}.{tablename}
+            WHERE {col} IS NOT NULL
+            GROUP BY {col}
+            HAVING COUNT(*) > {max_transactions};
+            """
+        )
         identifiers = set(row[0] for row in cursor.fetchall())
-        invalid_identifiers[col].union(identifiers)
+        invalid_identifiers[col].update(identifiers)
     if remap_type == 3:
         cursor.execute(
             f"""
@@ -112,7 +111,7 @@ def fetch_invalid(conn : _T_conn, tablename : str, max_transactions : int, remap
         )
         for row in cursor.fetchall():
             invalid_identifiers[row[0]].add(row[1])
-
+    cursor.close()
     return invalid_identifiers
 
 def insert_invalid_identifiers(conn : _T_conn, identifiers: list[tuple], schema_name : str, invalid_table : str = "graph_invalid_identifiers"):
@@ -130,7 +129,7 @@ def insert_invalid_identifiers(conn : _T_conn, identifiers: list[tuple], schema_
 
 def mark_synced(conn : _T_conn, graph_name: str, rows: Iterable[GraphRow], schema_name : str, sync_table : str):
     values = [
-        (graph_name, row.standardized_table, row.source_table or "unknown", row.record_id)
+        (graph_name, row.attributes.get("standardized_table", "unknown") or "unknown", row.attributes.get("source_table", "unknown") or "unknown", row.record_id)
         for row in rows
     ]
     if not values:
@@ -158,7 +157,7 @@ def mark_synced(conn : _T_conn, graph_name: str, rows: Iterable[GraphRow], schem
     conn.commit()
 
 
-def fetch_rows(conn : _T_conn, graph_name: str, table_name: str, columns: list[str], batch_size: int, schema_name : str, sync_table : str):
+def fetch_rows(conn : _T_conn, graph_name: str, table_name: str, columns: list[str], batch_size: int, schema_name : str, sync_table : str, schema_cols: dict):
     """
     Server-side named cursor: Postgres streams rows back in chunks of
     `itersize` rather than materializing the whole anti-join result set
@@ -169,7 +168,7 @@ def fetch_rows(conn : _T_conn, graph_name: str, table_name: str, columns: list[s
     logger.info("Opening streamed source read: table=%s graph=%s batch_size=%s", table_name, graph_name, batch_size)
     query = f"""
         SELECT
-          sync_{table_name} AS standardized_table,
+          'sync_{table_name}' AS standardized_table,
           {column_sql}
         FROM {schema_name}."{table_name}" t
         LEFT JOIN {schema_name}.{sync_table} a
@@ -187,7 +186,7 @@ def fetch_rows(conn : _T_conn, graph_name: str, table_name: str, columns: list[s
         batch = []
         batch_no = 0
         for row in cur:
-            batch.append(GraphRow.from_db_row(dict(row)))
+            batch.append(GraphRow.from_db_row(dict(row, schema_cols)))
             if len(batch) >= batch_size:
                 batch_no += 1
                 logger.info("Fetched graph batch %s from %s: rows=%s", batch_no, table_name, len(batch))
@@ -305,7 +304,7 @@ def sync_table(
         sync_config.phone_gap
     )
     static_invalid_identifiers = fetch_invalid(read_conn, table_name, sync_config.max_transactions, sync_config.remap_type, sync_config.schema_name, schema_cols)
-    for batch in fetch_rows(read_conn, graph_name, table_name, cols_list, sync_config.batch_size):
+    for batch in fetch_rows(read_conn, graph_name, table_name, cols_list, sync_config.batch_size, sync_config.schema_name, sync_config.sync_table, schema_cols):
         if sync_config.max_records is not None and total >= sync_config.max_records:
             break
 
@@ -316,13 +315,13 @@ def sync_table(
 
         if sync_config.dry_run:
 
-            clustered_identifiers, transaction_dates = cluster_identifiers(batch, static_invalid_identifiers, sync_config.phone_gap)
+            clustered_identifiers, transaction_dates = cluster_identifiers(batch, static_invalid_identifiers, sync_config.phone_gap, schema_cols)
             all_identifiers = distinct_identifiers(clustered_identifiers)
 
             identifier_identity_map = {}
             if not sync_config.phone_gap:
                 transaction_dates = None
-            statements = belongs_to_identity(identifier_identity_map, clustered_identifiers, transaction_dates, sync_config.max_identifiers, sync_config.remap_type, nebula)
+            statements = belongs_to_identity(identifier_identity_map, clustered_identifiers, transaction_dates, sync_config.max_identifiers, sync_config.remap_type, schema_cols, nebula)
             
             preview_statements = row_to_ngql(batch[0]) if batch else []
             logger.info(
@@ -338,10 +337,10 @@ def sync_table(
         
         clustered_identifiers, transaction_dates = cluster_identifiers(batch, static_invalid_identifiers, sync_config.phone_gap, schema_cols)
         all_identifiers = distinct_identifiers(clustered_identifiers)
-        identifier_identity_map = fetch_identities(all_identifiers, nebula, schema_cols, 2)
+        identifier_identity_map = fetch_identities(all_identifiers, nebula, 2)
         if not sync_config.phone_gap:
             transaction_dates = None
-        statements, db_statements = belongs_to_identity(identifier_identity_map, clustered_identifiers, transaction_dates, sync_config.max_identifiers, sync_config.remap_type, nebula)
+        statements, db_statements = belongs_to_identity(identifier_identity_map, clustered_identifiers, transaction_dates, sync_config.max_identifiers, sync_config.remap_type, schema_cols, nebula)
         if sync_config.remap_type == 3:
             insert_invalid_identifiers(audit_conn, db_statements, sync_config.schema_name)
 
@@ -415,13 +414,13 @@ def run_sync(
             ensure_invalids_table(audit_conn, sync_config.schema_name)
         if sync_config.dry_run:
             for table in table_list:
-                result = sync_table(read_conn, audit_conn, None, nebula_config.space, table, cols_list, schema_cols, sync_config)
+                result = sync_table(read_conn, audit_conn, None, nebula_config.space, table, sync_config, schema_cols, cols_list)
                 results[table] = result.rows_synced
             return results
 
         with NebulaClient(nebula_config) as nebula:
             for table in table_list:
-                result = sync_table(read_conn, audit_conn, nebula, nebula_config.space, table, sync_config)
+                result = sync_table(read_conn, audit_conn, nebula, nebula_config.space, table, sync_config, schema_cols, cols_list)
                 logger.info("Finished %s: %s rows synced", result.table_name, result.rows_synced)
                 results[table] = result.rows_synced
 

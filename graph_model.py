@@ -88,7 +88,7 @@ class GraphRow:
     identifiers: dict[str, str | None]
     signals: dict[str, str | None]
     attributes: dict[str, str | None]
-    edges: list[str]
+
     # standardized_table: str
     # record_id: str
     # provider_id: str | None
@@ -126,7 +126,10 @@ class GraphRow:
 
     @property
     def vertex_id(self) -> str:
-        return record_vid(self.attributes.get("source_table", "Unknown"), self.record_id)
+        source_table = self.attributes.get("source_table", "Unknown")
+        if source_table == None:
+            source_table = "Unknown"
+        return record_vid(source_table, self.record_id)
 
 
 def insert_vertex(tags: str | list[str], vertex_id: str, props: dict[str, str] | dict[str, dict[str, str]]) -> str:
@@ -186,7 +189,7 @@ def row_to_ngql(row: GraphRow) -> list[str]:
             record_id,
             {
                 "record": row.attributes,
-                "fg_hash": row.attributes
+                "fg_hash": row.signals
             },
         )
     ]
@@ -206,10 +209,10 @@ def row_to_ngql(row: GraphRow) -> list[str]:
     #     )
     #     statements.append(insert_edge("transacted_with", record_id, merchant_id))
 
-    for id_type, identifier in row.identifiers.values():
+    for id_type, identifier in row.identifiers.items():
         if identifier:
             vertex_id = vid(id_type, identifier)
-            statements.append(insert_vertex(id_type, {"value" : identifier}))
+            statements.append(insert_vertex(id_type, vertex_id,{"value" : identifier}))
             statements.append(insert_edge(f'has_{id_type}', record_id, vertex_id))
     return statements
 

@@ -17,7 +17,7 @@ class InvalidIdentifiers:
         MAX_IDENTIFIER_TRANSACTIONS = len(batch_data) / 20
         freq_map = {}
         for row in batch_data:
-            for identifier_type, identifier in row.identifiers.values():
+            for identifier_type, identifier in row.identifiers.items():
                 if identifier is not None:
                     freq_map[identifier] = freq_map.get(identifier, 0) + 1
                     if freq_map[identifier] > MAX_IDENTIFIER_TRANSACTIONS:
@@ -78,7 +78,7 @@ class UnionFind:
 
 def valid_identifiers(row : GraphRow, invalid_identifiers : dict[str, dict[str, int]], schema_cols : dict) -> list[str]:
     candidates = []
-    for identifier in identifier["identifiers"]:
+    for identifier in schema_cols["identifiers"]:
         name = identifier["name"]
         candidates.append((name, row.identifiers.get(name, None)))
     identifiers = []

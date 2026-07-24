@@ -63,8 +63,7 @@ def fetch_identifiers(identity_vid : str, nebula : NebulaClient, signals : list[
     for i in range(result.row_size()):
         row = [v.cast() for v in result.row_values(i)]
         r = by_record[row[0]]
-        r["identifiers"] = list()
-        r["identifiers"].append(row[1])
+        r.setdefault("identifiers", []).append(row[1])
         i = 2
         for signal in signals:
             r[signal] = row[i]
