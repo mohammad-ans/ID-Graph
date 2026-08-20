@@ -48,7 +48,7 @@ def pair_features(row_a: GraphRow, row_b: GraphRow, schema_cols: dict) -> dict[s
     return features
 
 
-
+FIELD_ORDER = ["screen_width", "screen_length", "ip_country", "city", "language", "temporal_same_day", "temporal_same_week", "temporal_same_month" "merchant_name"]
 PRIORS = {"screen_width": (0.85, 0.15), "screen_length" : (0.85, 0.15), "ip_country" : (0.9, 0.35), "city": (0.75, 0.08), "language": (0.9, 0.45), "temporal_same_day": (0.5, 0.03), "temporal_same_week": (0.7, 0.12), "temporal_same_month": (0.85, 0.35), "merchant_name": (0.4, 0.15)}
 DEFAULT_PROBABILITY = 0.05
 
@@ -115,3 +115,10 @@ class FellegiSunterModel:
         self.u_probs = {f: float(v) for f, v in zip(fields, m)}
         self.prior_match_prolly = float(pi)
         return self
+
+def classify(score, config):
+    if score >= config["auto_merge_threshold"]:
+        return "auto_merge"
+    if score >= config["review_threshold"]:
+        return "review"
+    return "reject"
