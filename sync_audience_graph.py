@@ -52,6 +52,22 @@ def connect_postgres(config: PostgresConfig):
         keepalives_count=5,
     )
 
+def ensure_(conn: _T_conn, schema_name: str):
+    with conn.cursor() as cursor:
+        f"""CREATE TABLE IF NOT EXISTS {schema_name}.merge_logs (
+        merge_id BIGSERIAL PRIMARY KEY, 
+        source_rampid text NOT NULL, 
+        target_rampid text NOT NULL, 
+        identifiers TEXT[], 
+        done_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);
+        """
+        f"""CREATE TABLE IF NOT EXISTS {schema_name}.remap_logs (
+        remap_id BIGSERIAL PRIMARY KEY, 
+        source_rampid text NOT NULL,
+        target_rampid text NOT NULL,
+        remap_type INTEGER NOT NULL,
+        done_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);"""
+
 def ensure_invalids_table(conn : _T_conn, schema_name : str, identifiers_table : str = "graph_invalid_identifiers"):
     logger.info(f"Ensuring {schema_name}.{identifiers_table}")
     with conn.cursor() as cursor:

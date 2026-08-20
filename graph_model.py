@@ -80,7 +80,8 @@ def record_vid(table_name: str, record_id: str) -> str:
     return vid("record", f"{normalize_token(table_name)}:{record_id}")
 
 def process_user_agent(user_agent : str):
-    pass
+    if user_agent is None:
+        return user_agent
 
 @dataclass(frozen=True)
 class GraphRow:
@@ -110,7 +111,7 @@ class GraphRow:
         identifiers = {}
         for spec in config["identifiers"]:
             value = clean_text(row.get(spec["column"]))
-            if value is not None and spec["pre_hashed"]:
+            if value is not None and not spec["pre_hashed"]:
                 value = sha256_text(value)
             identifiers[spec["name"]] = value
         signals = {}
@@ -329,6 +330,7 @@ def rules(identity_matches : dict[str, list[str]], transaction_dates : dict[str,
 
 def belongs_to_identity(identifier_identity_map : dict[str, str], cluster_map: dict, transaction_dates : dict[str, datetime.datetime] | None, max_identifiers : int, remap_type : int, schema_cols : dict, nebula : NebulaClient):
     statements = []
+    invalid_identifiers_declare = []
     db_statements = []
     for component in cluster_map.values():
         identity_matches = {}
@@ -356,25 +358,28 @@ def belongs_to_identity(identifier_identity_map : dict[str, str], cluster_map: d
             statements.extend(attach_identifiers(new_identifiers, canonical_identity))
         else:
             new_statements, canonical_identity, total_identifiers = mergeIdentities(valid_merges, nebula)
+            for identity in valid_merges:
+                db_statements.append(f"INSERT INTO merge_logs(source_rampid, target_rampid, identifiers) VALUES({identity}, {canonical_identity}, {[identity_matches[identity]]})")
             statements.extend(new_statements)
             statements.extend(attach_identifiers(new_identifiers, canonical_identity))
             total_identifiers += len(new_identifiers)
         
         if total_identifiers > max_identifiers:
             if schema_cols["signal_groups"] is None:
-                # logger.info
-                pass
-            new_statements, new_db_statements = remap_identifiers_strict(canonical_identity, nebula, remap_type, schema_cols)
+                continue
+            new_statements, new_invalid_identifiers_declare, new_db_statements = remap_identifiers_strict(canonical_identity, nebula, remap_type, schema_cols)
             statements.extend(new_statements)
+            invalid_identifiers_declare.extend(new_invalid_identifiers_declare)
             db_statements.extend(new_db_statements)
-    return statements, db_statements
+    return statements, invalid_identifiers_declare, new_db_statements
 
 def remap_identifiers_strict(identity_vid : str, nebula : NebulaClient, remap_type : int, schema_cols : dict):
     statements = []
+    invalid_identifiers_declare = []
     db_statements = []
     result = cluster_identifiers_strict(identity_vid, nebula, schema_cols)
     if result == None:
-        return statements, db_statements
+        return statements, invalid_identifiers_declare
     cluster_identifier, identifier_clusters, largest_cluster, identifier_count = result
     today = datetime.datetime.now().isoformat()
     if remap_type == 0 or remap_type == 1:
@@ -383,11 +388,15 @@ def remap_identifiers_strict(identity_vid : str, nebula : NebulaClient, remap_ty
             if cluster == largest_cluster:
                 continue
             identity = vid("uid", generate_identitiy_no())
-            statements.append(insert_vertex("identity_no", identity, {}))
+            vertex_created = False
             for identifier in cluster_identifier[cluster]:
                 if len(identifier_clusters[identifier]) == 0:
                     continue
                 if len(identifier_clusters[identifier]) == 1 and cluster in identifier_clusters[identifier]:
+                    if not vertex_created:
+                        statements.append(insert_vertex("identity_no", identity, {}))
+                        vertex_created = True
+                        db_statements.append(f"INSERT INTO remap_logs(source_rampid, target_rampid, remap_id) VALUES({identity_vid}, {identity}, {1})")
                     statements.append(insert_edge("belongs_to", identifier, identity, {"start_date" : today, "end_date" : ""}))
                 else:
                     identifier_clusters[identifier].clear()
@@ -401,15 +410,18 @@ def remap_identifiers_strict(identity_vid : str, nebula : NebulaClient, remap_ty
             if cluster == largest_cluster:
                 continue
             identity = vid("uid", generate_identitiy_no())
-            statements.append(insert_vertex("identity_no", identity, {}))
+            vertex_created = False
             for identifier in cluster_identifier[cluster]:
-
                 if len(identifier_clusters[identifier]) > 1:
                     max_identifier_cluster = max(identifier_clusters[identifier], key=lambda c : identifier_clusters[identifier][c])
                     identifier_clusters[identifier].clear()
                     identifier_clusters[identifier][max_identifier_cluster] = 1
 
                 if len(identifier_clusters[identifier]) == 1 and cluster in identifier_clusters[identifier]:
+                    if not vertex_created:
+                        statements.append(insert_vertex("identity_no", identity, {}))
+                        vertex_created = True
+                        db_statements.append(f"INSERT INTO remap_logs(source_rampid, target_rampid, remap_id) VALUES({identity_vid}, {identity}, {2})")
                     statements.append(insert_edge("belongs_to", identifier, identity, {"start_date" : today, "end_date" : ""}))
 
                 statements.append(update_edge("belongs_to", identifier, identity_vid, {"end_date" : today}))
@@ -420,19 +432,23 @@ def remap_identifiers_strict(identity_vid : str, nebula : NebulaClient, remap_ty
             if cluster == largest_cluster:
                 continue
             identity = vid("uid", generate_identitiy_no())
-            statements.append(insert_vertex("identity_no", identity, {}))
+            vertex_created = False
 
             for identifier in cluster_identifier[cluster]:
                 if len(identifier_clusters[identifier]) == 0:
                     continue
                 if len(identifier_clusters[identifier]) == 1:
+                    if not vertex_created:
+                        statements.append(insert_vertex("identity_no", identity, {}))
+                        vertex_created = True
+                        db_statements.append(f"INSERT INTO remap_logs(source_rampid, target_rampid, remap_id) VALUES({identity_vid}, {identity}, {2})")
                     statements.append(insert_edge("belongs_to", identifier, identity, {"start_date" : today, "end_date" : ""}))
                 else:
                     identifier_clusters[identifier].clear()
-                    db_statements.append(identifier_type(identifier))
+                    invalid_identifiers_declare.append(identifier_type(identifier))
                 statements.append(update_edge("belongs_to", identifier, identity_vid, {"end_date" : today}))    
 
-    return statements, db_statements
+    return statements, invalid_identifiers_declare, db_statements
                 
 def rows_to_ngql(rows: Iterable[GraphRow]) -> str:
     statements: list[str] = []

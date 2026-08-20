@@ -31,3 +31,9 @@ passthrough:
 
 record_id:
   - record_id
+
+resolver:
+ - probabilistic: true
+probabilistic:
+ - auto_merge_threshold: 0.9
+ - review_threshold: 0.8
