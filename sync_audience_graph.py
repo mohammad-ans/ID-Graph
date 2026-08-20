@@ -8,13 +8,15 @@ from typing import Iterable
 from collections import defaultdict
 import psycopg2
 import psycopg2.extras
-from psycopg2 import _T_conn
+from psycopg2.extensions import connection as _T_conn
 from config import NebulaConfig, PostgresConfig, SyncConfig
 from graph_model import GraphRow, row_to_ngql, belongs_to_identity
 from nebula_client import NebulaClient
 from batch_id_union import cluster_identifiers, distinct_identifiers
 from enum import Enum
 import re
+
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -35,9 +37,6 @@ class SyncResult:
 
 
 def connect_postgres(config: PostgresConfig):
-    # Do NOT set autocommit=True on this connection -- fetch_rows() below uses
-    # a named (server-side) cursor for streaming, which requires an open
-    # transaction for the life of the iteration.
     logger.info("Opening Postgres connection to %s:%s/%s", config.host, config.port, config.dbname)
     return psycopg2.connect(
         host=config.host,
@@ -52,21 +51,28 @@ def connect_postgres(config: PostgresConfig):
         keepalives_count=5,
     )
 
-def ensure_(conn: _T_conn, schema_name: str):
+def ensure_log_tables(conn: _T_conn, schema_name: str):
+    logger.info(f"Ensuring {schema_name}.merge_logs and {schema_name}.remap_logs exist")
+    
     with conn.cursor() as cursor:
-        f"""CREATE TABLE IF NOT EXISTS {schema_name}.merge_logs (
-        merge_id BIGSERIAL PRIMARY KEY, 
-        source_rampid text NOT NULL, 
-        target_rampid text NOT NULL, 
-        identifiers TEXT[], 
-        done_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);
-        """
-        f"""CREATE TABLE IF NOT EXISTS {schema_name}.remap_logs (
-        remap_id BIGSERIAL PRIMARY KEY, 
-        source_rampid text NOT NULL,
-        target_rampid text NOT NULL,
-        remap_type INTEGER NOT NULL,
-        done_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);"""
+        cursor.execute(
+            f"""CREATE TABLE IF NOT EXISTS {schema_name}.merge_logs (
+            merge_id BIGSERIAL PRIMARY KEY, 
+            source_rampid text NOT NULL, 
+            target_rampid text NOT NULL, 
+            identifiers TEXT[], 
+            done_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);
+        """)
+        cursor.execute(
+            f"""CREATE TABLE IF NOT EXISTS {schema_name}.remap_logs (
+            remap_id BIGSERIAL PRIMARY KEY, 
+            source_rampid text NOT NULL,
+            target_rampid text NOT NULL,
+            remap_type INTEGER NOT NULL,
+            done_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);"""
+        )
+    conn.commit()
+    logger.info("Merge and remap log tables done")
 
 def ensure_invalids_table(conn : _T_conn, schema_name : str, identifiers_table : str = "graph_invalid_identifiers"):
     logger.info(f"Ensuring {schema_name}.{identifiers_table}")
@@ -107,6 +113,7 @@ def fetch_invalid(conn : _T_conn, tablename : str, max_transactions : int, remap
     cursor = conn.cursor()
     for identifier in schema_cols["identifiers"]:
         col = identifier["column"]
+        validate_column_name(col)
         cursor.execute(
             f"""
             SELECT {col}
@@ -174,12 +181,8 @@ def mark_synced(conn : _T_conn, graph_name: str, rows: Iterable[GraphRow], schem
 
 
 def fetch_rows(conn : _T_conn, graph_name: str, table_name: str, columns: list[str], batch_size: int, schema_name : str, sync_table : str, schema_cols: dict):
-    """
-    Server-side named cursor: Postgres streams rows back in chunks of
-    `itersize` rather than materializing the whole anti-join result set
-    in memory. At under 500K rows/day this is comfortably within a single
-    process's memory, but streaming costs nothing and removes the ceiling.
-    """
+    for column in columns:
+        validate_column_name(column)
     column_sql = ", ".join(f't."{column}"' for column in columns)
     logger.info("Opening streamed source read: table=%s graph=%s batch_size=%s", table_name, graph_name, batch_size)
     query = f"""
@@ -216,13 +219,7 @@ def fetch_rows(conn : _T_conn, graph_name: str, table_name: str, columns: list[s
 
 
 def write_batch(nebula: NebulaClient, rows: list[GraphRow], max_workers: int):
-    """
-    Nebula writes are I/O-bound (one round-trip per statement), so a thread
-    pool gets real concurrency here without needing a Spark cluster --
-    GIL contention isn't a bottleneck for network-bound work like this.
-    Rows are grouped so each Nebula session writes many records instead of
-    checking out a new session per row.
-    """
+
     row_chunks = [
         rows[idx:idx + ROWS_PER_NEBULA_SESSION]
         for idx in range(0, len(rows), ROWS_PER_NEBULA_SESSION)
@@ -244,7 +241,7 @@ def write_batch(nebula: NebulaClient, rows: list[GraphRow], max_workers: int):
             for idx, chunk in enumerate(row_chunks)
         }
         for future in as_completed(futures):
-            future.result()  # re-raises if a row's writes failed
+            future.result()
 
 def write_identity_queries(nebula: NebulaClient, statements: list[str]):
     logger.info(
@@ -337,7 +334,7 @@ def sync_table(
             identifier_identity_map = {}
             if not sync_config.phone_gap:
                 transaction_dates = None
-            statements = belongs_to_identity(identifier_identity_map, clustered_identifiers, transaction_dates, sync_config.max_identifiers, sync_config.remap_type, schema_cols, nebula)
+            statements, invalid_identifiers_declare, db_statements = belongs_to_identity(identifier_identity_map, clustered_identifiers, transaction_dates, sync_config.max_identifiers, sync_config.remap_type, schema_cols, nebula)
             
             preview_statements = row_to_ngql(batch[0]) if batch else []
             logger.info(
@@ -356,9 +353,9 @@ def sync_table(
         identifier_identity_map = fetch_identities(all_identifiers, nebula, 2)
         if not sync_config.phone_gap:
             transaction_dates = None
-        statements, db_statements = belongs_to_identity(identifier_identity_map, clustered_identifiers, transaction_dates, sync_config.max_identifiers, sync_config.remap_type, schema_cols, nebula)
-        if sync_config.remap_type == 3:
-            insert_invalid_identifiers(audit_conn, db_statements, sync_config.schema_name)
+        statements, invalid_identifiers_declare, db_statements = belongs_to_identity(identifier_identity_map, clustered_identifiers, transaction_dates, sync_config.max_identifiers, sync_config.remap_type, schema_cols, nebula)
+        if sync_config.remap_type == 3 and invalid_identifiers_declare:
+            insert_invalid_identifiers(audit_conn, invalid_identifiers_declare, sync_config.schema_name)
 
         write_batch(nebula, batch, max_workers=sync_config.write_concurrency)
         write_identity_queries(nebula, statements)
@@ -426,6 +423,7 @@ def run_sync(
     nebula = NebulaClient(nebula_config)
     with connect_postgres(pg_config) as read_conn, connect_postgres(pg_config) as audit_conn:
         ensure_audit_table(audit_conn, sync_config.schema_name, sync_config.sync_table)
+        ensure_log_tables(audit_conn, sync_config.schema_name)
         if sync_config.remap_type == 3:
             ensure_invalids_table(audit_conn, sync_config.schema_name)
         if sync_config.dry_run:

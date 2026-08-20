@@ -2,7 +2,7 @@ from __future__ import annotations
 from uuid import uuid4
 import hashlib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from collections import defaultdict
 import datetime
 from decimal import Decimal
@@ -12,11 +12,9 @@ from cluster_union_strict import cluster_identifiers_strict
 _VID_SAFE_RE = re.compile(r"[^A-Za-z0-9_.:@|-]+")
 _LOC_SAFE_RE = r"[^a-z0-9]+"
 
-# Sentinel MAID values some SDKs send when a user has disabled ad tracking.
-# These are NOT real device identifiers -- letting them through would link
-# every privacy-conscious user on the same OS into one giant false identity.
+
 _DEVICE_SENTINELS = frozenset({
-    "00000000-0000-0000-0000-000000000000",  # iOS / Android disabled-tracking sentinel
+    "00000000-0000-0000-0000-000000000000",
     "00000000000000000000000000000000",
 })
 MAX_GAP_PHONE = 720
@@ -47,10 +45,6 @@ def sha256_text(value: str) -> str:
 
 
 def is_valid_maid(value: str | None) -> bool:
-    """
-    Guards against linking on a MAID that isn't a real device identifier.
-    Returns False for null/empty values and known sentinel placeholders.
-    """
     if not value:
         return False
     cleaned = value.strip()
@@ -89,7 +83,9 @@ class GraphRow:
     identifiers: dict[str, str | None]
     signals: dict[str, str | None]
     attributes: dict[str, str | None]
+    raw_signals: dict[str, str | None] = field(default_factory=dict)
 
+    #My previous standard schema
     # standardized_table: str
     # record_id: str
     # provider_id: str | None
@@ -115,14 +111,17 @@ class GraphRow:
                 value = sha256_text(value)
             identifiers[spec["name"]] = value
         signals = {}
+        raw_signals = {}
         for group in config["signal_groups"]:
             parts = [normalize_token(row.get(c)) for c in group["columns"]]
             combined = "".join(parts)
             signals[group["name"]] = sha256_text(combined) if combined else None
+            for c in group["columns"]:
+                raw_signals[c] = normalize_token(row.get(c))
 
         attributes = {c: clean_text(row.get(c)) for c in config["passthrough"] }
 
-        return cls(record_id=clean_text(row.get(config["record_id"][0])), identifiers=identifiers, signals=signals, attributes=attributes)
+        return cls(record_id=clean_text(row.get(config["record_id"][0])), identifiers=identifiers, signals=signals, attributes=attributes, raw_signals=raw_signals)
         
 
     @property
@@ -173,16 +172,6 @@ def update_vertex(vertex_id : str, tag : str, properties : dict[str, str]):
 
 
 def row_to_ngql(row: GraphRow) -> list[str]:
-    """
-    Identity resolution uses email, phone, and maid ONLY -- those are the
-    edges to traverse when asking "who is this." country and merchant are
-    also vertices (so "everyone who transacted in Vietnam" or "everyone who
-    shopped at Acme" is a direct traversal), but they are filtering/
-    analytical edges, not identity-linking ones: two unrelated people
-    sharing a country or merchant does not make them the same identity.
-    source_table stays a plain property -- it's bookkeeping, not something
-    you'd ever traverse from.
-    """
     record_id = row.vertex_id
     statements = [
         insert_vertex(
@@ -346,8 +335,13 @@ def belongs_to_identity(identifier_identity_map : dict[str, str], cluster_map: d
         valid_merges = rules(identity_matches, transaction_dates, nebula)
         if len(valid_merges) == 0:
             total_identifiers = len(component.identifiers)
+            today = datetime.datetime.now().isoformat()
+            for old_identity, rejected_identifiers in identity_matches.items():
+                for identifier in rejected_identifiers:
+                    statements.append(update_edge("belongs_to", identifier, old_identity, {"end_date": today}))
             new_statements, canonical_identity = add_identity(component.identifiers)
             statements.extend(new_statements)
+
         elif len(valid_merges) == 1:
             total_identifiers = len(new_identifiers)
             canonical_identity = valid_merges.pop()
@@ -371,7 +365,8 @@ def belongs_to_identity(identifier_identity_map : dict[str, str], cluster_map: d
             statements.extend(new_statements)
             invalid_identifiers_declare.extend(new_invalid_identifiers_declare)
             db_statements.extend(new_db_statements)
-    return statements, invalid_identifiers_declare, new_db_statements
+            ##fixx
+    return statements, invalid_identifiers_declare, db_statements
 
 def remap_identifiers_strict(identity_vid : str, nebula : NebulaClient, remap_type : int, schema_cols : dict):
     statements = []
@@ -379,7 +374,7 @@ def remap_identifiers_strict(identity_vid : str, nebula : NebulaClient, remap_ty
     db_statements = []
     result = cluster_identifiers_strict(identity_vid, nebula, schema_cols)
     if result == None:
-        return statements, invalid_identifiers_declare
+        return statements, invalid_identifiers_declare, db_statements
     cluster_identifier, identifier_clusters, largest_cluster, identifier_count = result
     today = datetime.datetime.now().isoformat()
     if remap_type == 0 or remap_type == 1:

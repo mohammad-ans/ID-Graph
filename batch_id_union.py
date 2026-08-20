@@ -14,7 +14,7 @@ class InvalidIdentifiers:
         self.invalid_identifiers = {"email" : {}, "phone" : {}}
 
     def invalid_relative_newD(self, batch_data : list[GraphRow]):
-        MAX_IDENTIFIER_TRANSACTIONS = len(batch_data) / 20
+        MAX_IDENTIFIER_TRANSACTIONS = max(len(batch_data) / 20, 5)
         freq_map = {}
         for row in batch_data:
             for identifier_type, identifier in row.identifiers.items():
@@ -116,7 +116,7 @@ def cluster_identifiers(rows : list[GraphRow], static_invalid_identifiers : dict
             unresolvable.append(row)
             continue
         if phone_gap:
-            date = parse_date(row.transaction_date)
+            date = parse_date(row.attributes.get("transaction_date"))
             if date is not None:
                 if identifiers[0] in transaction_dates:
                     transaction_dates[identifiers[0]] = min(transaction_dates[identifiers[0]], date)
@@ -147,11 +147,10 @@ def cluster_identifiers(rows : list[GraphRow], static_invalid_identifiers : dict
         f"into {len(cluster_map)} idependent identifier clusters"
     )
 
-    return cluster_map, transaction_dates
+    return cluster_map, transaction_dates, unresolvable
 
 def distinct_identifiers(cluster_map : dict[str , IdentityGroup]) -> list[str]:
     identifiers = []
     for group in cluster_map:
         identifiers.extend(cluster_map[group].identifiers)
     return identifiers
-    

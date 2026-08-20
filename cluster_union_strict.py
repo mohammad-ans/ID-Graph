@@ -1,6 +1,5 @@
 from nebula_client import NebulaClient
 from collections import defaultdict
-import datetime
 
 class UnionFind:
     """Root Union Find"""
@@ -99,6 +98,8 @@ def cluster_identifiers_strict(identity_vid : str, nebula : NebulaClient, schema
 
     uf.cluster_pair.clear()
     uf.pair_cluster.clear()
+    if not cluster_identifier:
+        return None
 
     largest_cluster = max(cluster_identifier, key=lambda c : len(cluster_identifier[c]))
     return cluster_identifier, identifier_clusters, largest_cluster, identifier_count
