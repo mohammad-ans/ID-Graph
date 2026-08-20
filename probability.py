@@ -122,3 +122,34 @@ def classify(score, config):
     if score >= config["review_threshold"]:
         return "review"
     return "reject"
+
+class SimpleUnionFind:
+    def __init__(self):
+        self.parent: dict[str, str] = {}
+
+    def ensureRoot(self, x):
+        if x not in self.parent:
+            self.parent[x] = x
+
+    def find(self, x):
+        self.ensureRoot(x)
+        if self.parent[x] != x:
+            self.parent[x] = self.find(self.parent[x])
+        return self.parent[x]
+    
+    def union(self, x, y):
+        rootX, rootY = self.find(x), self.find(y)
+        if rootX != rootY:
+            self.parent[rootX] = rootY
+
+def group_auto_merging(scored: list[tuple[GraphRow, GraphRow, float, dict]]) -> list[list[GraphRow]]:
+    uf = SimpleUnionFind()
+    id_row: dict[str, GraphRow] = {}
+    for row_a, row_b, score, features in scored:
+        id_row[row_a.record_id] = row_a
+        id_row[row_b.record_id] = row_b
+        uf.union(row_a.record_id, row_b.record_id)
+    groups = {}
+    for id, row in id_row.items():
+        groups.setdefault(uf.find(id), []).append(row)
+    return list(groups.values)
