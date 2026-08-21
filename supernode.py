@@ -2,13 +2,16 @@ from __future__ import annotations
 import datetime
 import math
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from nebula_client import NebulaClient
 
 BURST_WINDOW_SECONDS = 3600
+MIN_POPULATION = 3
+Z_SINGLE_FEATURE = 3.0
+Z_ENSEMBLE = 2.0
 
 FEATURE_NAMES = {"identifier_count", "record_count", "identifier_growth", "signal_diversity", "temporal_burst"}
 
@@ -50,6 +53,18 @@ class ClusterFeatures:
 
     def as_dict(self):
         return {name : getattr(self, name) for name in FEATURE_NAMES}
+
+
+@dataclass
+class AnomalyResult:
+    features: ClusterFeatures
+    z_sources: dict[str. float] = field(default_factory=dict)
+    mean_z: float = 0.0
+    max_features: str | None = None
+    is_anomalous: bool = False
+    population_ready: bool = False
+    reason: str = ""
+
 
 def parse_date(value):
     if not value:
@@ -115,7 +130,7 @@ def fetch_cluster_snapshot(identity_vid: str, nebula: NebulaClient, schema_cols:
             offset += 1
     return by_record
 
-def coompute_features(identity_vid: str, snapshot: dict):
+def compute_features(identity_vid: str, snapshot: dict):
     all_identifiers = set()
     signal_tuples = []
     dates = []
@@ -133,3 +148,42 @@ def coompute_features(identity_vid: str, snapshot: dict):
         signal_diversity=shanon_entropy(signal_tuples),
         temporal_burst=temporal_burst_score(dates)
     )
+
+
+class SupernodeAnomalyScorer:
+    def __init__(self, z_single: float = Z_SINGLE_FEATURE, z_ensemble: float = Z_ENSEMBLE, min_population: int = MIN_POPULATION):
+        self.stats: dict[str, OnlineStats] = {name: OnlineStats() for name in FEATURE_NAMES}
+        self.last_identifier_count: dict[str, int] = {}
+        self.history: list[AnomalyResult] = []
+        self.z_single = z_single
+        self.z_ensemble = z_ensemble
+        self.min_population = min_population
+
+    def score(self, identity_vid: str, nebula: NebulaClient, scehma_cols: dict):
+        snapshot = fetch_cluster_snapshot(identity_vid, nebula, scehma_cols)
+        features = compute_features(identity_vid, snapshot)
+        if features.record_count  == 0:
+            result = AnomalyResult(features, reason="Identity has zero transactions inserted in graph db, meaning the identifiers linked to it also have zero transactions")
+            self.history.append(result)
+            return result
+        prior_count = self.last_identifier_count.get(identity_vid, 0)
+        features.identifier_growth = max(features.identifier_count - prior_count, 0)
+        self.last_identifier_count[identity_vid] = features.identifier_count
+        values = features.as_dict()
+        z_scores = {}
+        for name, value in values.items():
+            z_scores[name] = self.stats[name].zscore(value)
+            self.stats[name].update(value)
+        population_ready = self.stats["identifier_count"].n >= self.min_population
+        max_z = max(z_scores.values())
+        mean_z = sum(max(z, 0.0) for z in z_scores.values()) / len(z_scores)
+        is_anomalous = population_ready and (max_z >= self.z_single or mean_z >= self.z_ensemble)
+        if not population_ready:
+            reason = f"Population not ready, so cannot call anything as outlier. Identifiers count {self.stats['identifier_count']} Min population {self.min_population}"
+        elif is_anomalous:
+            reason = f"Feature with value {max_z:.2f} standard deviates from the population mean_z {mean_z:.2f}"
+        else:
+            reason = f"Within normal range mean_z {mean_z:.2f} z {max_z:.2f}"
+        result = AnomalyResult(features, z_scores, mean_z, max_z, is_anomalous, population_ready, reason)
+        self.history.append(result)
+        return result
