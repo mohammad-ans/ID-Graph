@@ -153,3 +153,56 @@ def group_auto_merging(scored: list[tuple[GraphRow, GraphRow, float, dict]]) -> 
     for id, row in id_row.items():
         groups.setdefault(uf.find(id), []).append(row)
     return list(groups.values)
+
+def week_bucket(date: str | None):
+    d = parse_date(date)
+    if d is None:
+        return d
+    iso = d.isocalendar()
+    return f"{iso[0]}-W{iso[1]}"
+
+def blocking_key(row: GraphRow):
+    return (row.raw_signals.get("ip_country"), week_bucket(row.attributes.get("transaction_date")))
+
+def generate_candidates(rows: list[GraphRow], max_block_size: int = 200):
+    blocks = {}
+    for row in rows:
+        blocks.setdefault(blocking_key(row), []).append(row)
+    candidates = []
+    for members in blocks.values():
+        if len(members) < 2:
+            continue
+        if len(members) > max_block_size:
+            members = members[:max_block_size]
+        for i in range(len(members)):
+            for j in range(i + 1, len(members)):
+                candidates.append(members[i], members[j])
+                
+    return candidates
+
+
+@dataclass
+class ProbabilisticLinking:
+    auto_merge_groups: list[list[GraphRow]]
+    review_candidates: list[tuple[GraphRow, GraphRow, float, dict]]
+    rejected_count: int
+
+def resolve_prolly(rows: list[GraphRow], schema_cols: dict, model: FellegiSunterModel | None = None):
+    if model is None:
+        model = FellegiSunterModel()
+    config = parse_config(schema_cols)
+    am_pairs = []
+    review_pairs = []
+    rejected = 0
+
+    for row_a, row_b in rows:
+        features = pair_features(row_a, row_b, schema_cols)
+        score = model.score(features)
+        outcome = classify(score, config)
+        if outcome == "auto_merge":
+            am_pairs.append((row_a, row_b, score, features))
+        elif outcome == "review":
+            review_pairs.append((row_a, row_b, score, features))
+        else:
+            rejected += 1
+    return ProbabilisticLinking(auto_merge_groups=group_auto_merging(am_pairs), review_candidates=review_pairs, rejected_count=rejected)
