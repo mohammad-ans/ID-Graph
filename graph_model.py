@@ -6,9 +6,13 @@ from dataclasses import dataclass, field
 from collections import defaultdict
 import datetime
 from decimal import Decimal
-from typing import Iterable
+from typing import Iterable, TYPE_CHECKING
 from nebula_client import NebulaClient
 from cluster_union_strict import cluster_identifiers_strict
+
+if TYPE_CHECKING:
+    from supernode import SupernodeAnomalyScorer
+
 _VID_SAFE_RE = re.compile(r"[^A-Za-z0-9_.:@|-]+")
 _LOC_SAFE_RE = r"[^a-z0-9]+"
 
@@ -226,6 +230,14 @@ def attach_identifiers(identifiers : set[str] | list[str], identity_id : str) ->
         statements.append(insert_edge("belongs_to", identifier, identity_id, {"start_date" : today, "end_date" : ""}))
     return statements
 
+def add_probable_identity(rows: list[GraphRow], score, method: str = "fellegi_sunter"):
+    identity = vid("uid", generate_identitiy_no())
+    today = datetime.datetime.now().isoformat()
+    statements = [insert_vertex("identity_no", identity, {"resolution_method": method})]
+    for row in rows:
+        statements.append(insert_edge("probable_match", row.vertex_id, identity, {"score": round(score, 4), "method": method, "linked_at": today}))
+    return statements, identity
+
 def mergeIdentities(identity_list : set[str], nebula : NebulaClient) -> list[str]:
     insertion_statments = []
     update_statements = []
@@ -291,7 +303,7 @@ def check_phone_gap(phone : str, p_date : datetime.datetime, nebula: NebulaClien
         return abs(date - p_date).days < MAX_GAP_PHONE
         
         
-    except Exception as exc:
+    except Exception:
         return False
 
 def rules(identity_matches : dict[str, list[str]], transaction_dates : dict[str, datetime.datetime] | None, nebula):
@@ -317,7 +329,7 @@ def rules(identity_matches : dict[str, list[str]], transaction_dates : dict[str,
             
 
 
-def belongs_to_identity(identifier_identity_map : dict[str, str], cluster_map: dict, transaction_dates : dict[str, datetime.datetime] | None, max_identifiers : int, remap_type : int, schema_cols : dict, nebula : NebulaClient):
+def belongs_to_identity(identifier_identity_map : dict[str, str], cluster_map: dict, transaction_dates : dict[str, datetime.datetime] | None, max_identifiers : int, remap_type : int, schema_cols : dict, nebula : NebulaClient, scorer: SupernodeAnomalyScorer | None = None):
     statements = []
     invalid_identifiers_declare = []
     db_statements = []
@@ -357,15 +369,16 @@ def belongs_to_identity(identifier_identity_map : dict[str, str], cluster_map: d
             statements.extend(new_statements)
             statements.extend(attach_identifiers(new_identifiers, canonical_identity))
             total_identifiers += len(new_identifiers)
-        
-        if total_identifiers > max_identifiers:
+        anomaly_result = None
+        if scorer is not None and schema_cols["signal_groups"] is not None:
+            anomaly_result = scorer.score(canonical_identity, nebula, schema_cols)
+        if total_identifiers > max_identifiers or (anomaly_result is not None and anomaly_result.is_anomalous):
             if schema_cols["signal_groups"] is None:
                 continue
             new_statements, new_invalid_identifiers_declare, new_db_statements = remap_identifiers_strict(canonical_identity, nebula, remap_type, schema_cols)
             statements.extend(new_statements)
             invalid_identifiers_declare.extend(new_invalid_identifiers_declare)
             db_statements.extend(new_db_statements)
-            ##fixx
     return statements, invalid_identifiers_declare, db_statements
 
 def remap_identifiers_strict(identity_vid : str, nebula : NebulaClient, remap_type : int, schema_cols : dict):

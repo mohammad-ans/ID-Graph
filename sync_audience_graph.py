@@ -10,11 +10,12 @@ import psycopg2
 import psycopg2.extras
 from psycopg2.extensions import connection as _T_conn
 from config import NebulaConfig, PostgresConfig, SyncConfig
-from graph_model import GraphRow, row_to_ngql, belongs_to_identity
+from graph_model import GraphRow, row_to_ngql, belongs_to_identity, add_probable_identity
 from nebula_client import NebulaClient
 from batch_id_union import cluster_identifiers, distinct_identifiers
-from enum import Enum
+from probability import resolve_prolly, prolly_enabled
 import re
+import json
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -106,6 +107,37 @@ def ensure_audit_table(conn : _T_conn, schema_name : str, sync_table : str):
         )
     conn.commit()
     logger.info("Audit table ready")
+
+def ensure_review_queue(conn: _T_conn, schema_name: str, review_table: str = "identity_review_queue"):
+    logger.info(f"Ensuring {schema_name}.{review_table} exists")
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {schema_name}.{review_table} (
+                review_id BIGSERIAL PRIMARY KEY,
+                record_id_a text NOT NULL,
+                record_id_b text NOT NULL,
+                score DOUBLE PRECISION NOT NULL,
+                features JSONB NOT NULL,
+                status text NOT NULL DEFAULT 'pending',
+                created_at timestamp NOT NULL DEFAULT now(),
+                decided_at timestamp,
+                CHECK (status IN ('pending', 'confirmed', 'rejected'))
+            );
+            """
+        )
+    conn.commit()
+    logger.info("Review queue table ready")
+
+def insert_review_candidates(conn: _T_conn, candidates: list[tuple], schema_name: str, review_table : str = "identity_review_queue"):
+    if not candidates:
+        return
+    with conn.cursor() as cur:
+        args = [(a, b, score, json.dumps(features)) for a, b, score, features in candidates]
+        cur.executemany(
+            f"INSERT INTO {schema_name}.{review_table} (record_id_a, record_id_b, score, features) VALUES (%s %s %s %s)", args
+        )
+    conn.commit()
 
 def fetch_invalid(conn : _T_conn, tablename : str, max_transactions : int, remap_type : int, schema_name : str, schema_cols: dict, invalid_table : str = "graph_invalid_identifiers"):
     logger.info("Getting supernode identifiers from database")
@@ -328,7 +360,7 @@ def sync_table(
 
         if sync_config.dry_run:
 
-            clustered_identifiers, transaction_dates = cluster_identifiers(batch, static_invalid_identifiers, sync_config.phone_gap, schema_cols)
+            clustered_identifiers, transaction_dates, unresolvable = cluster_identifiers(batch, static_invalid_identifiers, sync_config.phone_gap, schema_cols)
             all_identifiers = distinct_identifiers(clustered_identifiers)
 
             identifier_identity_map = {}
@@ -348,7 +380,7 @@ def sync_table(
                 break
             continue
         
-        clustered_identifiers, transaction_dates = cluster_identifiers(batch, static_invalid_identifiers, sync_config.phone_gap, schema_cols)
+        clustered_identifiers, transaction_dates, unresolvable = cluster_identifiers(batch, static_invalid_identifiers, sync_config.phone_gap, schema_cols)
         all_identifiers = distinct_identifiers(clustered_identifiers)
         identifier_identity_map = fetch_identities(all_identifiers, nebula, 2)
         if not sync_config.phone_gap:
@@ -356,7 +388,18 @@ def sync_table(
         statements, invalid_identifiers_declare, db_statements = belongs_to_identity(identifier_identity_map, clustered_identifiers, transaction_dates, sync_config.max_identifiers, sync_config.remap_type, schema_cols, nebula)
         if sync_config.remap_type == 3 and invalid_identifiers_declare:
             insert_invalid_identifiers(audit_conn, invalid_identifiers_declare, sync_config.schema_name)
-
+        if unresolvable and prolly_enabled:
+            prob_result = resolve_prolly(unresolvable, schema_cols)
+            for group_rows, score in prob_result.auto_merge_groups:
+                group_statements, _ = add_probable_identity(group_rows, score)
+                statements.extend(group_statements)
+            if prob_result.review_candidates:
+                review_rows = [(row_a.record_id, row_b.record_id, score, features) for row_a, row_b, score, features in prob_result.review_candidates]
+                insert_review_candidates(audit_conn, review_rows, sync_config.schema_name)
+            logger.info(
+                f"Probabilistic linkage for {table_name}: {len(unresolvable)} converted to {prob_result.auto_merge_groups} auto merges and {prob_result.review_candidates} review candidates and {prob_result.rejected_count} rejected"
+            )
+        
         write_batch(nebula, batch, max_workers=sync_config.write_concurrency)
         write_identity_queries(nebula, statements)
         mark_synced(audit_conn, graph_name, batch, sync_config.schema_name, sync_config.sync_table)
@@ -426,6 +469,8 @@ def run_sync(
         ensure_log_tables(audit_conn, sync_config.schema_name)
         if sync_config.remap_type == 3:
             ensure_invalids_table(audit_conn, sync_config.schema_name)
+        if prolly_enabled(schema_cols):
+            ensure_review_queue(audit_conn, sync_config.schema_name)
         if sync_config.dry_run:
             for table in table_list:
                 result = sync_table(read_conn, audit_conn, None, nebula_config.space, table, sync_config, schema_cols, cols_list)

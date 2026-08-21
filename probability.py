@@ -14,6 +14,11 @@ def parse_config(schema_cols: dict) -> dict:
         out.update(item)
     return out
 
+def prolly_enabled(schema_cols: dict):
+    for item in schema_cols.get("resolver", []):
+        if "probabilistic" in item:
+            return bool(item["probabilistic"])
+
 def signal_columns(schema_cols: dict) -> list[str]:
     cols = []
     for group in schema_cols["signal_groups"]:
