@@ -370,8 +370,8 @@ def sync_table(
             
             preview_statements = row_to_ngql(batch[0]) if batch else []
             logger.info(
-                "Dry run for %s: would sync %s rows; example statements:\n%s",
-                table_name, len(batch), ";\n".join(preview_statements),
+                "Dry run for %s: would sync %s rows; example statements:\n%s. Invalid identifiers: %s and data base audit tables statements %s",
+                table_name, len(batch), ";\n".join(preview_statements), ",".join(invalid_identifiers_declare), ";\n".join(db_statements)
             )
 
             total += len(batch)
