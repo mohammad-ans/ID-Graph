@@ -137,17 +137,17 @@ class FakeNebulaClient:
         if upper.startswith(("CREATE SPACE", "USE ", "CREATE TAG", "CREATE EDGE")):
             return Result([], [])
         if upper.startswith("INSERT VERTEX"):
-            return
+            return self.insert_vertex(statement)
         if upper.startswith("INSERT EDGE"):
-            return
+            return self.insert_edge(statement)
         if upper.startswith("UPDATE EDGE"):
-            return
+            return self.update_edge(statement)
         if upper.startswith("UPDATE VERTEX"):
-            return
+            return self.update_vertex(statement)
         if upper.startswith("DELETE EDGE"):
-            return
+            return self.delete_edge(statement)
         if upper.startswith("GO FORM"):
-            return
+            return self.go(statement)
         raise NotImplementedError(f"Statement not found")
 
     def insert_vertex(self, statement):
@@ -221,8 +221,56 @@ class FakeNebulaClient:
     def go(self, statement: str, carry: list[dict] | None = None):
         stage, _, piped = statement.partition("|")
         stage = stage.strip()
-        m = re.match(r'GO FROM\s+(?P<from>+?)\s+OVER\s+(?P<edges[\w,]+)'
+        m = re.match(r'GO FROM\s+(?P<from>.+?)\s+OVER\s+(?P<edges[\w,]+)'
                      r'(?P<reversely>\s+REVERSELY)?'
-                     r'(?:\s+WHERE\s(?P<where>.+?))?'
-                     '\s+YIELD\s+(?P<yield>+)$', stage, re.IGNORECASE | re.DOTALL)
-        
+                     r'(?:\s+WHERE\s+(?P<where>.+?))?'
+                     '\s+YIELD\s+(?P<yield>.+)$', stage, re.IGNORECASE | re.DOTALL)
+        if not m:
+            raise NotImplementedError(f"Error in GO query")
+        from_clause = m.group("from").strip()
+        edge_types = [e.strip() for e in m.group("edges").split(",")]
+        reversely = bool(m.group("reversely"))
+        not_end_date = bool(m.group("where")) and "end_date" in m.group("where")
+        yield_fields = split_top_level(m.group("yield"))
+
+        from_pairs: list[tuple[str, dict | None]]
+        if from_clause.startswith("$-."):
+            col = from_clause[len("$-."):].strip()
+            from_pairs = [(row[col], row) for row in (carry or []) if row.get(col) is not None]
+        else:
+            from_pairs = [(v, None) for v in parse_vid_list(from_clause)]
+        out_rows = []
+        for fid, parent_row in from_pairs:
+            for et in edge_types:
+                neighbor_map = (self.graph.in_edges.get(fid, {})).get(et, {})
+                if not reversely:
+                    neighbor_map = self.graph.out_edges.get(fid, {}).get(et, {})
+                for landed_vid, edge_props in neighbor_map.items():
+                    if not_end_date and edge_props.get("end_date", "") != "":
+                        continue
+                    src, dest = (fid, landed_vid)
+                    if reversely:
+                        src, dest = (landed_vid, fid)
+                    row = {"__landed__": landed_vid, "__from__": fid, "__parent__": parent_row}
+                    for field_expr in yield_fields:
+                        expr, _, alias = field_expr.strip().rpartition(" AS ")
+                        expr = expr.strip() or field_expr.strip()
+                        alias = alias.strip() or expr
+                        if expr.lower() == "src(edge)":
+                            row[alias] = src
+                        elif expr.lower() == "dst(edge)":
+                            row[alias] = dest
+                        elif expr.startswith("properties($$)."):
+                            prop = expr[len("properties($$)."):]
+                            row[alias] = self.graph.get_vertex_prop(landed_vid, prop)
+                        elif expr.startswith("$-."):
+                            col = expr[len("$-."):]
+                            row[alias] = parent_row.get(col) if parent_row else None
+                        else:
+                            raise NotImplementedError(f"YIELD field error: {field_expr}")
+                    out_rows.append(row)
+        if piped.strip():
+            return self.go(piped.strip(), carry=out_rows)
+        columns = [c for c in out_rows[0].keys() if not c.startswith("__")] if out_rows else [f.strip().rpartition("  AS  ")[-1].strip() for f in yield_fields]
+        rows = [[r.get(c) for c in columns] for r in out_rows]
+        return Result(columns, rows)
