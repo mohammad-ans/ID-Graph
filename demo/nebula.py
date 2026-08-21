@@ -136,4 +136,93 @@ class FakeNebulaClient:
         upper = statement.upper()
         if upper.startswith(("CREATE SPACE", "USE ", "CREATE TAG", "CREATE EDGE")):
             return Result([], [])
+        if upper.startswith("INSERT VERTEX"):
+            return
+        if upper.startswith("INSERT EDGE"):
+            return
+        if upper.startswith("UPDATE EDGE"):
+            return
+        if upper.startswith("UPDATE VERTEX"):
+            return
+        if upper.startswith("DELETE EDGE"):
+            return
+        if upper.startswith("GO FORM"):
+            return
+        raise NotImplementedError(f"Statement not found")
+
+    def insert_vertex(self, statement):
+        body = statement[len("INSERT VERTEX"):].strip()
+        head, values_part = body.split(" VALUES ", 1)
+        tag_specs = re.findall(r'`?(\w+)`?\(([^)]*)\)', head)
+        vid_match = _VID_RE.match(values_part.strip())
+        vid = vid_match.group(1)
+        rest = values_part.strip()[vid_match.end():].lstrip(":").strip()
+        if rest.startswith("(") and rest.endswith(")"):
+            rest = rest[1:-1]
+        all_values = split_top_level(rest) if rest.strip() else []
+        offset = 0
+        for tag, cols in tag_specs:
+            col_names = [c.strip() for c in cols.split(",")] if cols.strip() else []
+            n = len(col_names)
+            vals = all_values[offset: offset + n]
+            offset += n
+            props = {c: parse_ngql_lieral(v) for c, v in zip(col_names, vals)}
+            self.graph.insert_vertex(vid, tag, props)
+        return Result([], [])
+
+    def insert_edge(self, statement):
+        m = re.match(r'INSERT EDGE `?(\w+)`?\(([^)]*)\) VALUES\s+(.+)', statement, re.IGNORECASE | re.DOTALL)
+        edge_type = m.group(1)
+        cols = m.group(2)
+        values_part = m.group(3)
+        vids = parse_vid_list(values_part)
+        src = vids[0]
+        dest = vids[1]
+        vals_match = re.search(r':\(([^)]*)\)', values_part)
+        col_names = [c.strip() for c in cols.split(",")] if cols.strip() else []
+        val_items = []
+        if vals_match and vals_match.group(1).strip():
+            val_items = split_top_level(vals_match.group(1))
+        props = {c: parse_ngql_lieral(v) for c, v in zip(col_names, val_items)}
+        self.graph.insert_edge(edge_type, src, dest, props)
+        return Result([], [])
+
+    def update_edge(self, statement):
+        m = re.match(r'UPDATE EDGE ON (\w+)\s+(.+?)\s+SET\s+(.+)', statement, re.IGNORECASE | re.DOTALL)
+        edge_type = m.group(1)
+        vid_part = m.group(2)
+        set_part = m.group(3)
+        src, dst = parse_vid_list(vid_part)
+        props = self.graph.out_edges.get(src, {}).get(edge_type, {}).get(dst, {})
+        for assignment in split_top_level(set_part):
+            col, val = assignment.split("=", 1)
+            props[col.strip()] = parse_ngql_lieral(val.strip())
+        self.graph.insert_edge(edge_type, src, dst, props)
+
+    def update_vertex(self, statement):
+        m = re.match(r'UPDATE VERTEX\s+(.+?)SET\s(.+)', statement, re.IGNORECASE | re.DOTALL)
+        vid = _VID_RE.match(m.group(1).strip()).group(1)
+        set_part = m.group(2)
+        for assignment in split_top_level(set_part):
+            #colFull is tag.col
+            colFull, val = assignment.split("=", 1)
+            tag, col = colFull.strip().split(".", 1)
+            self.graph.vertices[vid].setdefault(tag, {})[col] = parse_ngql_lieral(val.strip())
+        return Result([], [])
+
+    def delete_edge(self, statement):
+        m = re.match(r'DELETE EDGE\s+(\w+)\s+(.+)', statement, re.IGNORECASE)
+        edge_type = m.group(1)
+        vid_part = m.group(2)
+        src, dst = parse_vid_list(vid_part)
+        self.graph.delete_edge(edge_type, src, dst)
+        return Result([], [])
+
+    def go(self, statement: str, carry: list[dict] | None = None):
+        stage, _, piped = statement.partition("|")
+        stage = stage.strip()
+        m = re.match(r'GO FROM\s+(?P<from>+?)\s+OVER\s+(?P<edges[\w,]+)'
+                     r'(?P<reversely>\s+REVERSELY)?'
+                     r'(?:\s+WHERE\s(?P<where>.+?))?'
+                     '\s+YIELD\s+(?P<yield>+)$', stage, re.IGNORECASE | re.DOTALL)
         
