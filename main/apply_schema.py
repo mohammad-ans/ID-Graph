@@ -12,7 +12,29 @@ logger = logging.getLogger(__name__)
 
 
 def split_ngql(script: str) -> list[str]:
-    return [statement.strip() for statement in script.split(";") if statement.strip()]
+    statements = []
+    buffer = []
+    in_string = False
+    i = 0
+    n = len(script)
+    while i < n:
+        ch = script[i]
+        if ch == '"' and (i == 0 or script[i - 1] != "\\"):
+            in_string = not in_string
+            buffer.append(ch)
+        elif not in_string and (script[i: i + 2] in ("--", "//") or ch == "#"):
+            while i < n and script[i] != "\n":
+                i += 1
+            continue
+        elif not in_string and ch == ";":
+            statements.append("".join(buffer).strip())
+            buffer = []
+        else:
+            buffer.append(ch)
+    tail = "".join(buffer).strip()
+    if tail:
+        statements.append(tail)
+    return [s for s in statements if s]
 
 
 def execute_or_raise(session, statement: str):

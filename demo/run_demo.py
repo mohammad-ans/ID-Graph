@@ -97,10 +97,10 @@ class IdentityTracker:
 
     def observe_batch(self, rows: list[GraphRow], new_identifiers: set[str]):
         for row in rows:
-            identity = primary_identifier_vid(row)
-            if identity is not None:
-                self.record_to_identity[row.record_id] = identity
-                self.record_to_identifier[row.record_id] = current_active_identity(self.graph, identity)
+            identifier = primary_identifier_vid(row)
+            if identifier is not None:
+                self.record_to_identity[row.record_id] = current_active_identity(self.graph, identifier)
+                self.record_to_identifier[row.record_id] = identifier
                 self.record_kind[row.record_id] = "identifier"
                 continue
             probable = current_probable_match_identity(self.graph, row.vertex_id)
@@ -108,14 +108,16 @@ class IdentityTracker:
                 self.record_to_identity[row.record_id] = probable
                 self.record_to_identifier[row.record_id] = row.record_id
                 self.record_kind[row.record_id] = "probable_match"
-        for record_id, identity in self.record_to_identifier.items():
+        for record_id, identifier in self.record_to_identifier.items():
+            if identifier is None:
+                continue
             if record_id in [r.record_id for r in rows] or self.record_kind.get(record_id) == "probable_match" or record_id in self.frozen:
                 continue
 
-            current = current_active_identity(self.graph, identity)
+            current = current_active_identity(self.graph, identifier)
             if current is None or current == self.record_to_identity[record_id]:
                 continue
-            if identity in new_identifiers:
+            if identifier in new_identifiers:
                 self.frozen.add(record_id)
                 continue
             self.record_to_identity[record_id] = current
@@ -158,13 +160,13 @@ def supernode_demo(max_identifiers_hint: int):
     scorer = SupernodeAnomalyScorer()
     groups = group_rows(build_showcase_rows())
     identity_vids = {}
-    identifiers = set()
     for key, raw_rows in groups.items():
+        identifiers = set()
         rows = [GraphRow.from_db_row(row, schema_cols) for row in raw_rows]
         for row in rows:
             nebula.execute_many(row_to_ngql(row))
             identifiers.update(graph_vid(id_type, value) for id_type, value in row.identifiers.items() if value)
-        statements, identity = ""
+        statements, identity = add_probable_identity(identifiers)
         nebula.execute_many(statements)
         identity_vids[key] = identity
     header = f"{"identity":<24}{"idc":>5}{"recs":>6}{"growth":>8}{"diversity":>11}{"burst":>8}{"mean_z":>9}{"max_z":>8}  verdict"
@@ -178,12 +180,12 @@ def supernode_demo(max_identifiers_hint: int):
         verdict = "ANOMALOUS" if result.is_anomalous else ("warming up" if not result.population_ready else "normal")
         print(f"{label:<24}{f.identifier_count:>5}{f.record_count:>6}{f.identifier_growth:>8}{f.signal_diversity:>11.2f}{f.temporal_burst:>8.2f}{result.mean_z:>9.2f}{result.max_z}  {verdict}")
 
-        promo_result = scorer.history[-1]
-        by_static = promo_result.features.identifier_count > max_identifiers_hint
-        if by_static:
-            print(f"Promo result could also be caught by static {max_identifiers_hint} max identifiers count. Total identifiers count: {promo_result.features.identifier_count}. The adaptive detector confirms it.")
-        else:
-            print(f"Promo result could not have been caught by static {max_identifiers_hint} max identifiers count. Total identifiers count: {promo_result.features.identifier_count}. The adaptive detector catches it as: {promo_result.reason}")
+    promo_result = scorer.history[-1]
+    by_static = promo_result.features.identifier_count > max_identifiers_hint
+    if by_static:
+        print(f"Promo result could also be caught by static {max_identifiers_hint} max identifiers count. Total identifiers count: {promo_result.features.identifier_count}. The adaptive detector confirms it.")
+    else:
+        print(f"Promo result could not have been caught by static {max_identifiers_hint} max identifiers count. Total identifiers count: {promo_result.features.identifier_count}. The adaptive detector catches it as: {promo_result.reason}")
 
 def main():
     parser = argparse.ArgumentParser(description="Run demo of the identity graph")
@@ -194,7 +196,7 @@ def main():
     logging.getLogger().setLevel(logging.WARNING)
     schema_cols = load_schema_cols()
     batches = build_batches()
-    nebula = FakeNebulaClient()
+    nebula = FakeNebulaClient(schema_path=str(MAIN_DIR / "schema.ngql"))
 
     print("=" * 72)
     print("RampID-style identity graph -- live demo (in-memory styled Nebula)")
@@ -283,7 +285,7 @@ def main():
         print("Probabilistic linking thresholds were wrongly tweaked or it itself is wrong")
 
     if scorer is not None:
-        print("\n", + "=" * 72)
+        print("\n" + "=" * 72)
         print("Super Node class activity during the scenario:\n")
         if scorer.history:
             for r in scorer.history:

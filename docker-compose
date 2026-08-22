@@ -15,7 +15,7 @@ services:
         image: vesoft/nebula-storaged:v3.6.0
         command:
             - --meta_server_addrs=metad:9559
-            - --local_ip=storged
+            - --local_ip=storaged
             - --ws_ip=storaged
             - --port=9779
             - --data_path=/data/storage

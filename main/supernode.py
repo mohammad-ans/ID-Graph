@@ -58,7 +58,7 @@ class ClusterFeatures:
 @dataclass
 class AnomalyResult:
     features: ClusterFeatures
-    z_sources: dict[str. float] = field(default_factory=dict)
+    z_sources: dict[str, float] = field(default_factory=dict)
     mean_z: float = 0.0
     max_z: float | None = None
     is_anomalous: bool = False
@@ -179,7 +179,7 @@ class SupernodeAnomalyScorer:
         mean_z = sum(max(z, 0.0) for z in z_scores.values()) / len(z_scores)
         is_anomalous = population_ready and (max_z >= self.z_single or mean_z >= self.z_ensemble)
         if not population_ready:
-            reason = f"Population not ready, so cannot call anything as outlier. Identifiers count {self.stats['identifier_count']} Min population {self.min_population}"
+            reason = f"Population not ready, so cannot call anything as outlier. Identifiers count {self.stats['identifier_count'].n} Min population {self.min_population}"
         elif is_anomalous:
             reason = f"Feature with value {max_z:.2f} standard deviates from the population mean_z {mean_z:.2f}"
         else:

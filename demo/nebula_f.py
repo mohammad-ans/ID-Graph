@@ -2,6 +2,27 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field
 import re
+from pathlib import Path
+
+
+
+CREATE_RE = re.compile(r'CREATE\s+(TAG|EDGE)\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(\w+)`?\s*\(([^)]*)\)', re.IGNORECASE)
+
+def parse_schema(text: str):
+    tags = {}
+    edges = {}
+    for kind, name, cols in CREATE_RE.findall(text):
+        prop_names = set()
+        if cols.strip():
+            for col_def in cols.split(","):
+                col_def = col_def.strip()
+                if col_def:
+                    prop_names.add(col_def.split()[0])
+        if kind.upper() == "TAG":
+            tags[name] = prop_names
+        else:
+            edges[name] = prop_names
+    return tags, edges
 
 @dataclass
 class Graph:
@@ -107,12 +128,20 @@ def split_top_level(text: str, sep: str = ","):
     return [p.strip() for p in parts]
 
 class FakeNebulaClient:
-    def __init__(self, config=None, pool_size: int = 10, graph: Graph | None = None):
+    def __init__(self, config=None, pool_size: int = 10, graph: Graph | None = None, schema_path: str | None = None):
         self.config = config
         self.graph = graph
         if graph is None:
             self.graph = Graph()
         self.statement_log: list[str] = []
+        self.declared_tags: dict[str, set[str]] | None = None
+        self.declared_edges: dict[str, set[str]] | None = None
+        if schema_path:
+            self.load_schema(schema_path)
+
+    def load_schema(self, schema_path: str):
+        text = Path(schema_path).read_text()
+        self.declared_tags, self.declared_edges = parse_schema(text)
 
     def __enter__(self):
         return self
