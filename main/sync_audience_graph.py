@@ -174,9 +174,9 @@ def insert_invalid_identifiers(conn : _T_conn, identifiers: list[tuple], schema_
         cursor.execute(
             f"""
                 INSERT INTO {schema_name}.{invalid_table} (identifier_type, identifier)
-                VALUES {", ".join(f"('{identifier[0]}', '{identifier[1]}')" for identifier in identifiers)}
+                VALUES {", ".join(f"(%s, %s)" for _ in identifiers)}
                 ON CONFLICT DO NOTHING;
-            """
+            """, (", ".join(f"('{identifier[0]}', '{identifier[1]}')" for identifier in identifiers))
         )
     conn.commit()
     logger.info("Invalid identifiers added")
@@ -388,7 +388,7 @@ def sync_table(
         statements, invalid_identifiers_declare, db_statements = belongs_to_identity(identifier_identity_map, clustered_identifiers, transaction_dates, sync_config.max_identifiers, sync_config.remap_type, schema_cols, nebula)
         if sync_config.remap_type == 3 and invalid_identifiers_declare:
             insert_invalid_identifiers(audit_conn, invalid_identifiers_declare, sync_config.schema_name)
-        if unresolvable and prolly_enabled:
+        if unresolvable and prolly_enabled(schema_cols):
             prob_result = resolve_prolly(unresolvable, schema_cols)
             for group_rows, score in prob_result.auto_merge_groups:
                 group_statements, _ = add_probable_identity(group_rows, score)
@@ -397,7 +397,7 @@ def sync_table(
                 review_rows = [(row_a.record_id, row_b.record_id, score, features) for row_a, row_b, score, features in prob_result.review_candidates]
                 insert_review_candidates(audit_conn, review_rows, sync_config.schema_name)
             logger.info(
-                f"Probabilistic linkage for {table_name}: {len(unresolvable)} converted to {prob_result.auto_merge_groups} auto merges and {prob_result.review_candidates} review candidates and {prob_result.rejected_count} rejected"
+                f"Probabilistic linkage for {table_name}: {len(unresolvable)} converted to {len(prob_result.auto_merge_groups)} auto merges and {len(prob_result.review_candidates)} review candidates and {prob_result.rejected_count} rejected"
             )
         
         write_batch(nebula, batch, max_workers=sync_config.write_concurrency)

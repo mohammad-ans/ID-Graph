@@ -29,7 +29,7 @@ def parse_date(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
-        return datetime.isoformat(value)
+        return datetime.fromisoformat(value)
     except (TypeError, ValueError):
         return None
 
@@ -43,17 +43,15 @@ def pair_features(row_a: GraphRow, row_b: GraphRow, schema_cols: dict) -> dict[s
     gap_days = None
     if date_a and date_b:
         gap_days = abs((date_a - date_b).days)
-    if gap_days is not None:
-        for name, window in TIME_SLOTS:
-            if gap_days <= window:
-                features[name] = gap_days
+    for name, window in TIME_SLOTS:
+            features[name] = gap_days is not None and gap_days <= window
     merchant_a = row_a.attributes.get("merchant_name")
     merchant_b = row_b.attributes.get("merchant_name")
     features["merchant_name"] = merchant_a is not None and merchant_a == merchant_b
     return features
 
 
-FIELD_ORDER = ["screen_width", "screen_length", "ip_country", "city", "language", "temporal_same_day", "temporal_same_week", "temporal_same_month" "merchant_name"]
+FIELD_ORDER = ["screen_width", "screen_length", "ip_country", "city", "language", "temporal_same_day", "temporal_same_week", "temporal_same_month", "merchant_name"]
 PRIORS = {"screen_width": (0.85, 0.15), "screen_length" : (0.85, 0.15), "ip_country" : (0.9, 0.35), "city": (0.75, 0.08), "language": (0.9, 0.45), "temporal_same_day": (0.5, 0.03), "temporal_same_week": (0.7, 0.12), "temporal_same_month": (0.85, 0.35), "merchant_name": (0.4, 0.15)}
 DEFAULT_PROBABILITY = 0.05
 
@@ -67,8 +65,8 @@ def stable_sigmoid(x):
 @dataclass
 class FellegiSunterModel:
     m_probs: dict[str, float] = dc_field(default_factory=lambda: {k: v[0] for k, v in PRIORS.items()})
-    u_probs: dict[str, float] = dc_field(default_factory=lambda: {k: v[1] for k, v in PRIORS})
-    prior_match_prolly = DEFAULT_PROBABILITY
+    u_probs: dict[str, float] = dc_field(default_factory=lambda: {k: v[1] for k, v in PRIORS.items()})
+    prior_match_prolly: float = DEFAULT_PROBABILITY
 
     def score(self, features: dict[str, bool]):
         log_lr = 0.0
@@ -80,7 +78,7 @@ class FellegiSunterModel:
         prior_log_odds = math.log(prior / (1 - prior))
         return stable_sigmoid(prior_log_odds + log_lr)
 
-    def fit_em(self, feature_rows: list[dict[str, bool]], max_tier: int = 25, tol: float = 1e-4, smoothing_alpha: float = 1.0):
+    def fit_em(self, feature_rows: list[dict[str, bool]], max_iter: int = 25, tol: float = 1e-4, smoothing_alpha: float = 1.0):
         if not feature_rows:
             return self
         fields = sorted({f for row in feature_rows for f in row})
@@ -92,13 +90,13 @@ class FellegiSunterModel:
         a = smoothing_alpha
 
         prev_ll = None
-        for _ in range(max_tier):
-            log_m, log_1m = numpy.log(numpy.clip(m, 1e-6, 1- 1e-6)), numpy.log(numpy.clip(1 - u, 1e-6, 1- 1e-6))
+        for _ in range(max_iter):
+            log_m, log_1m = numpy.log(numpy.clip(m, 1e-6, 1- 1e-6)), numpy.log(numpy.clip(1 - m, 1e-6, 1- 1e-6))
             log_u, log_1u = numpy.log(numpy.clip(u, 1e-6, 1- 1e-6)), numpy.log(numpy.clip(1 - u, 1e-6, 1 - 1e-6))
             log_p_match =  X @ log_m + (1 - X) @ log_1m + math.log(max(pi, 1e-9))
             log_p_nonmatch = X @ log_u + (1 - X) @ log_1u + math.log(max( 1 - pi, 1e-9))
             mx_log = numpy.maximum(log_p_match, log_p_nonmatch)
-            denom = mx_log + numpy.log(numpy.log(log_p_match - mx_log) + numpy.exp(log_p_nonmatch - mx_log))
+            denom = mx_log + numpy.log(numpy.exp(log_p_match - mx_log) + numpy.exp(log_p_nonmatch - mx_log))
             posterior = numpy.exp(log_p_match - denom)
             w_match = posterior.sum()
             w_nonmatch = (1 - posterior).sum()
@@ -117,7 +115,7 @@ class FellegiSunterModel:
                 break
             prev_ll = ll
         self.m_probs = {f: float(v) for f, v in zip(fields, m)}
-        self.u_probs = {f: float(v) for f, v in zip(fields, m)}
+        self.u_probs = {f: float(v) for f, v in zip(fields, u)}
         self.prior_match_prolly = float(pi)
         return self
 
@@ -147,17 +145,22 @@ class SimpleUnionFind:
         if rootX != rootY:
             self.parent[rootX] = rootY
 
-def group_auto_merging(scored: list[tuple[GraphRow, GraphRow, float, dict]]) -> list[list[GraphRow]]:
+def group_auto_merging(scored: list[tuple[GraphRow, GraphRow, float, dict]]) -> list[tuple[GraphRow, GraphRow, float, dict]]:
     uf = SimpleUnionFind()
+    pair_scores = {}
     id_row: dict[str, GraphRow] = {}
-    for row_a, row_b, score, features in scored:
+    for row_a, row_b, score, _ in scored:
         id_row[row_a.record_id] = row_a
         id_row[row_b.record_id] = row_b
         uf.union(row_a.record_id, row_b.record_id)
     groups = {}
     for id, row in id_row.items():
         groups.setdefault(uf.find(id), []).append(row)
-    return list(groups.values)
+    group_of = {id: uf.find(id) for id in id_row}
+    for row_a, row_b, score, _ in scored:
+        root = group_of[row_a.record_id]
+        pair_scores.setdefault(root, []).append(score)
+    return [ (rows, sum(pair_scores[root]) / len(pair_scores[root])) for root, rows in groups.items() ]
 
 def week_bucket(date: str | None):
     d = parse_date(date)
@@ -181,7 +184,7 @@ def generate_candidates(rows: list[GraphRow], max_block_size: int = 200):
             members = members[:max_block_size]
         for i in range(len(members)):
             for j in range(i + 1, len(members)):
-                candidates.append(members[i], members[j])
+                candidates.append((members[i], members[j]))
                 
     return candidates
 
@@ -199,8 +202,8 @@ def resolve_prolly(rows: list[GraphRow], schema_cols: dict, model: FellegiSunter
     am_pairs = []
     review_pairs = []
     rejected = 0
-
-    for row_a, row_b in rows:
+    candidates = generate_candidates(rows)
+    for row_a, row_b in candidates:
         features = pair_features(row_a, row_b, schema_cols)
         score = model.score(features)
         outcome = classify(score, config)
