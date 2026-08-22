@@ -54,8 +54,8 @@ def connect_postgres(config: PostgresConfig):
 
 def ensure_main_table(conn: _T_conn, schema_name: str, table_name: str = "record_identities"):
     logger.info(f"Ensuring {schema_name}.{table_name} exists")
-    with conn.cursor() as cursor:
-        cursor.execute(
+    with conn.cursor() as cur:
+        cur.execute(
             f"""CREATE TABLE IF NOT EXISTS {schema_name}.{table_name} (
                 record_id text PRIMARY KEY,
                 identity_no text NOT NULL,
@@ -64,11 +64,11 @@ def ensure_main_table(conn: _T_conn, schema_name: str, table_name: str = "record
             );"""
         )
     conn.commit()
-    with conn.cursor() as cursor:
-        cursor.execute(
+    with conn.cursor() as cur:
+        cur.execute(
             "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schemas = %s AND table_name = %s)", (schema_name, table_name)
         )
-        exists = cursor.fetchone()
+        exists = cur.fetchone()
         if not exists:
             raise RuntimeError("main table of identities not found, check postgres")
     logger.info(f"{schema_name}.{table_name} done")
@@ -252,6 +252,65 @@ def fetch_invalid(conn : _T_conn, tablename : str, max_transactions : int, remap
             invalid_identifiers[row[0]].add(row[1])
     cursor.close()
     return invalid_identifiers
+
+def fetch_pool_candidates(conn:_T_conn, blocking_keys: set[tuple], schema_name: str, pool_table: str = "unresolved_candidate_pool"):
+    if not blocking_keys:
+        return []
+    with conn.cursor() as cur:
+        countries = set()
+        weeks = set()
+        for country, week in blocking_keys:
+            countries.add(country)
+            weeks.add(week)
+        countries = list(countries)
+        weeks = list(weeks)
+        cur.execute(f"""
+            SELECT row_data FROM {schema_name}.{pool_table}
+            WHERE blocking_key_country = ANY(%s) AND blocking_key_week = ANY(%s)
+            """, (countries, weeks))
+        rows = cur.fetchall()
+    exact = []
+    for (row_data,) in rows:
+        pool_row = PoolRow.from_dict(row_data)
+        if blocking_key(pool_row) in blocking_keys:
+            exact.append(pool_row)
+    return exact
+
+def ensure_candidate_history(conn: _T_conn, schema_name: str, history_table: str = "fellegi_sunter_candidate_history"):
+    logger.info(f"Ensuring {schema_name}.{history_table} exists")
+    with conn.cursor() as cur:
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {schema_name}.{history_table} (
+                history_id BIGSERIAL PRIMARY KEY,
+                record_id_a text NOT NULL,
+                record_id_b text NOT NULL,
+                features JSONB NOT NULL,
+                score DOUBLE PRECISION NOT NULL,
+                outcome text NOT NULL,
+                scored_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CHECK (outcome IN ('auto_merge'm 'review', 'reject'))
+            );
+        """)
+    conn.commit()
+    logger.info("Candidate history table done")
+
+def insert_candidate_history(conn: _T_conn, scored: list[tuple], schema_name: str, history_table: str = "fellegi_sunter_candidate_history"):
+    if not scored:
+        return
+    with conn.cursor() as cur:
+        args = [(a, b, score, json.dumps(features), outcome) for a, b, score, features, outcome in scored]
+        cur.executemany(f"""
+            INSERT INTO {schema_name}.{history_table}
+            (record_id_a, record_id_b, score, features, outcome)
+            VALUES(%s, %s, %s, %s, %s)
+        """, args
+        )
+    conn.commit()
+
+def fetch_candidate_history(conn: _T_conn, schema_name: str, history_table: str = "fellegi_sunter_candidate_history", limit: int = 5000):
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT features FROM {schema_name}.{history_table} ORDER_BY scored_at DESC LIMIT %S", (limit, ))
+    return [row[0] for row in cur.fetchall()]
 
 def insert_invalid_identifiers(conn : _T_conn, identifiers: list[tuple], schema_name : str, invalid_table : str = "graph_invalid_identifiers"):
     with conn.cursor() as cursor:
