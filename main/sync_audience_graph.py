@@ -13,7 +13,7 @@ from config import NebulaConfig, PostgresConfig, SyncConfig
 from graph_model import GraphRow, row_to_ngql, belongs_to_identity, add_probable_identity, get_identities
 from nebula_client import NebulaClient
 from batch_id_union import cluster_identifiers, distinct_identifiers
-from probability import resolve_prolly, prolly_enabled
+from probability import resolve_prolly, prolly_enabled, PoolRow, blocking_key
 import re
 import json
 
@@ -56,7 +56,7 @@ def ensure_main_table(conn: _T_conn, schema_name: str, table_name: str = "record
     logger.info(f"Ensuring {schema_name}.{table_name} exists")
     with conn.cursor() as cursor:
         cursor.execute(
-            f"""CREATE TABLE IF NOT EXISTS {schema_name}.{table_name}(
+            f"""CREATE TABLE IF NOT EXISTS {schema_name}.{table_name} (
                 record_id text PRIMARY KEY,
                 identity_no text NOT NULL,
                 resolution_method text NOT NULL DEFAULT 'deterministic',
@@ -77,8 +77,8 @@ def insert_identities(conn: _T_conn, resolved: dict[str, tuple[str, str]], schem
     if not resolved:
         return
     args = [(record_id, identity, method) for record_id, (identity, method) in resolved.items()]
-    with conn.cursor as cursor:
-        psycopg2.extras.execute_values(cursor,
+    with conn.cursor as cur:
+        psycopg2.extras.execute_values(cur,
             f"""
                 INSERT INTO {schema_name}.{table_name} (record_id, identity_no, resolution_method) 
                 VALUES %s 
@@ -93,8 +93,8 @@ def insert_identities(conn: _T_conn, resolved: dict[str, tuple[str, str]], schem
 def ensure_log_tables(conn: _T_conn, schema_name: str):
     logger.info(f"Ensuring {schema_name}.merge_logs and {schema_name}.remap_logs exist")
     
-    with conn.cursor() as cursor:
-        cursor.execute(
+    with conn.cursor() as cur:
+        cur.execute(
             f"""CREATE TABLE IF NOT EXISTS {schema_name}.merge_logs (
             merge_id BIGSERIAL PRIMARY KEY, 
             source_rampid text NOT NULL, 
@@ -102,7 +102,7 @@ def ensure_log_tables(conn: _T_conn, schema_name: str):
             identifiers TEXT[], 
             done_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);
         """)
-        cursor.execute(
+        cur.execute(
             f"""CREATE TABLE IF NOT EXISTS {schema_name}.remap_logs (
             remap_id BIGSERIAL PRIMARY KEY, 
             source_rampid text NOT NULL,
@@ -115,8 +115,8 @@ def ensure_log_tables(conn: _T_conn, schema_name: str):
 
 def ensure_invalids_table(conn : _T_conn, schema_name : str, identifiers_table : str = "graph_invalid_identifiers"):
     logger.info(f"Ensuring {schema_name}.{identifiers_table}")
-    with conn.cursor() as cursor:
-        cursor.execute(
+    with conn.cursor() as cur:
+        cur.execute(
             f"""
             CREATE TABLE IF NOT EXISTS {schema_name}.{identifiers_table} (
                 identifier_type text NOT NULL,
@@ -175,6 +175,52 @@ def insert_review_candidates(conn: _T_conn, candidates: list[tuple], schema_name
         cur.executemany(
             f"INSERT INTO {schema_name}.{review_table} (record_id_a, record_id_b, score, features) VALUES (%s, %s, %s, %s)", args
         )
+    conn.commit()
+
+def ensure_candidate_pool(conn: _T_conn, schema_name: str, pool_table: str = "unresolved_candidate_pool"):
+    logger.info(f"Ensuring {schema_name}.{pool_table} exists")
+    with conn.cursor() as cur:
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {schema_name}.{pool_table} (
+                record_id text PRIMARY_KEY,
+                blocking_key_country text,
+                blocking_key_week text,
+                row_data JSONB NOT NULL,
+                first_seen_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_seen_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );"""
+        )
+        cur.execute(f"""
+            CREATE INDEX IF NOT EXISTS {pool_table}_blocking_idx
+            ON {schema_name}.{pool_table} (blocking_key_country, blocking_key_week)
+        """)
+    conn.commit()
+    logger.info("Candidate pool table done")
+
+def insert_pool(conn: _T_conn, rows: list, schema_name: str, pool_table: str = "unresolved_candidate_pool"):
+    if not rows:
+        return
+    with conn.cursor() as cur:
+        args = []
+        for row in rows:
+            pool_row = row if isinstance(row, PoolRow) else PoolRow.from_graph_row(row)
+            country, week = blocking_key(pool_row)
+            args.append((pool_row.record_id, country, week, json.dumps(pool_row.to_dict())))
+        cur.executemany(f"""
+            INSERT INTO {schema_name}.{pool_row}
+            (record_id, blocking_key_country. blocking_key_week, row_data, last_seen_at)
+            VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (record_id) DO UPDATE SET
+            row_data = EXCLUDED.row_data, last_seen_at = CURRENT_TIMESTAMP
+        """, args
+        )
+    conn.commit()
+
+def remove_from_pool(conn: _T_conn, records_ids: set[str], schema_name: str, pool_table: str = "unresolved_candidate_pool"):
+    if not records_ids:
+        return
+    with conn.cursor() as cur:
+        cur.execute(f"DELETE FROM {schema_name}.{pool_table} WHERE record_id = ANY(%s)", (list(records_ids), ))
     conn.commit()
 
 def fetch_invalid(conn : _T_conn, tablename : str, max_transactions : int, remap_type : int, schema_name : str, schema_cols: dict, invalid_table : str = "graph_invalid_identifiers"):

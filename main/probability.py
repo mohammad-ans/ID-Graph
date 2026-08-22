@@ -138,6 +138,14 @@ class PoolRow:
         source_table = self.attributes.get("source_table") or "Unknown"
         return record_vid(source_table, self.record_id)
 
+    @classmethod
+    def from_graph_row(cls, row: GraphRow):
+        return cls(row.record_id, raw_signals=dict(row.raw_signals), attributes=dict(row.attributes))
+    def to_dict(self):
+        return {"record_id": self.record_id, "raw_signals": self.raw_signals, "attributes": self.attributes}
+    @classmethod
+    def from_dict(cls, d: dict):
+        return cls(record_id=d["record_id"], raw_signals=d["raw_signals"], attributes=d["attributes"])
 
 def generate_cross_batch_candidates(rows: list[GraphRow], pool_rows: list[PoolRow], max_block_size: int = 200):
     new_pairs = generate_candidates(rows, max_block_size)
