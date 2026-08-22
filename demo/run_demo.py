@@ -11,12 +11,12 @@ sys.path.insert(0, str(DEMO_DIR))
 
 import yaml
 from nebula_f import FakeNebulaClient
-from dummy_data import build_batches
-from main.graph_model import GraphRow, belongs_to_identity,  add_probable_identity
+from dummy_data import build_batches, build_showcase_rows
+from main.graph_model import GraphRow, belongs_to_identity,  add_probable_identity, vid as graph_vid, row_to_ngql
 from main.batch_id_union import cluster_identifiers, distinct_identifiers
 from main.sync_audience_graph import fetch_identities, write_batch, write_identity_queries
 from main.probability import prolly_enabled, resolve_prolly
-
+from main.supernode import SupernodeAnomalyScorer
 
 RECORD_LABELS = {
     "r-alice-1": "Alice", "r-alice-2": "Alice", "r-dave-1": "Dave",  "r-dave-2": "Dave", "r-bob-1": "Bob", "r-carol-1": "Carol",
@@ -42,14 +42,14 @@ def pairs_to_static_invalid(pairs: list[list[str]]):
         out.setdefault(id_type, set()).add(value)
     return out
 
-def run_batch(nebula, schema_cols, raw_rows, static_invalid, max_identifiers, remap_type, phone_gap, prob_model=None):
+def run_batch(nebula, schema_cols, raw_rows, static_invalid, max_identifiers, remap_type, phone_gap, prob_model=None, scorer=None):
     rows = [GraphRow.from_db_row(r, schema_cols) for r in raw_rows]
     clustered, transaction_dates, unresolvable = cluster_identifiers(rows, static_invalid, phone_gap, schema_cols)
     all_identifiers = distinct_identifiers(clustered)
     identifier_identity_map = fetch_identities(all_identifiers, nebula, 2)
     if not phone_gap:
         transaction_dates = None
-    statements, invalid_identifiers_declare, db_statements = belongs_to_identity(identifier_identity_map, clustered, transaction_dates, max_identifiers, remap_type, schema_cols, nebula)
+    statements, invalid_identifiers_declare, db_statements = belongs_to_identity(identifier_identity_map, clustered, transaction_dates, max_identifiers, remap_type, schema_cols, nebula, scorer)
     prob_result = None
     if unresolvable and prolly_enabled(schema_cols):
         prob_result = resolve_prolly(unresolvable, schema_cols, prob_model)
@@ -139,10 +139,57 @@ class IdentityTracker:
                 orphaned.append(record_id)
         return orphaned
 
+def group_rows(rows: list[dict]):
+    groups = {}
+    for row in rows:
+        record_id = row["record_id"]
+        key = "showcase_promo" if "promo" in record_id else record_id.split("-")[1]
+        groups.setdefault(key, []).append(row)
+    return groups
+
+SHOWCASE_ORDER = {"nadia", "omar", "priya", "quinn", "rosa", "sam", "showcase_promo"}
+
+def supernode_demo(max_identifiers_hint: int):
+    print("\n" + "=" * 72)
+    print("Super node detection showcase like its adaptivity unlike static n before")
+    print("6 ordinary customers and 1 shared promo email supernode-shaped cluster")
+    schema_cols = load_schema_cols()
+    nebula = FakeNebulaClient()
+    scorer = SupernodeAnomalyScorer()
+    groups = group_rows(build_showcase_rows())
+    identity_vids = {}
+    identifiers = set()
+    for key, raw_rows in groups.items():
+        rows = [GraphRow.from_db_row(row, schema_cols) for row in raw_rows]
+        for row in rows:
+            nebula.execute_many(row_to_ngql(row))
+            identifiers.update(graph_vid(id_type, value) for id_type, value in row.identifiers.items() if value)
+        statements, identity = ""
+        nebula.execute_many(statements)
+        identity_vids[key] = identity
+    header = f"{"identity":<24}{"idc":>5}{"recs":>6}{"growth":>8}{"diversity":>11}{"burst":>8}{"mean_z":>9}{"max_z":>8}  verdict"
+    print(header,"-" * len(header), sep="\n")
+    for key in SHOWCASE_ORDER:
+        label = key.capitalize()
+        if key == "showcase_promo":
+            label = "Shared promo supernode"
+        result = scorer.score(identity_vids[key], nebula, schema_cols)
+        f = result.features
+        verdict = "ANOMALOUS" if result.is_anomalous else ("warming up" if not result.population_ready else "normal")
+        print(f"{label:<24}{f.identifier_count:>5}{f.record_count:>6}{f.identifier_growth:>8}{f.signal_diversity:>11.2f}{f.temporal_burst:>8.2f}{result.mean_z:>9.2f}{result.max_z}  {verdict}")
+
+        promo_result = scorer.history[-1]
+        by_static = promo_result.features.identifier_count > max_identifiers_hint
+        if by_static:
+            print(f"Promo result could also be caught by static {max_identifiers_hint} max identifiers count. Total identifiers count: {promo_result.features.identifier_count}. The adaptive detector confirms it.")
+        else:
+            print(f"Promo result could not have been caught by static {max_identifiers_hint} max identifiers count. Total identifiers count: {promo_result.features.identifier_count}. The adaptive detector catches it as: {promo_result.reason}")
+
 def main():
     parser = argparse.ArgumentParser(description="Run demo of the identity graph")
     parser.add_argument("--max-identifiers", type=int, default=3)
     parser.add_argument("--remap-type", default=int, default=3)
+    parser.add_argument("--adaptive-detection", action="store_true")
     args = parser.parse_args()
     logging.getLogger().setLevel(logging.WARNING)
     schema_cols = load_schema_cols()
@@ -155,11 +202,12 @@ def main():
     print("=" * 72)
     static_invalid: dict[str, set[str]] = {}
     tracker = IdentityTracker(nebula.graph)
+    scorer = SupernodeAnomalyScorer() if args.adaptive_detection else None
     all_review_candidates = []
 
     for i, batch in enumerate(batches, start=1):
         print(f"\n Batch {i}: {len(batch)} incoming rows \n")
-        result = run_batch(nebula, schema_cols, batch, static_invalid, args.max_identifiers, args.remap_type, phone_gap=True)
+        result = run_batch(nebula, schema_cols, batch, static_invalid, args.max_identifiers, args.remap_type, phone_gap=True, scorer=scorer)
         print(f"Batch clusters: {result["clusters"]}\n")
         if result["invalid_declared"]:
             invalid_identifiers = pairs_to_static_invalid(result["invalid_declared"])
@@ -233,6 +281,16 @@ def main():
         print("Records with zero identifiers, so no deterministic. Eren's transactions were auto merged by signals, traveler landed in review queue due to different ip. Lonewolf was separate not touching anything so correct")
     else:
         print("Probabilistic linking thresholds were wrongly tweaked or it itself is wrong")
+
+    if scorer is not None:
+        print("\n", + "=" * 72)
+        print("Super Node class activity during the scenario:\n")
+        if scorer.history:
+            for r in scorer.history:
+                print(f" {r.features.identity_vid[:24]:24s} {r.reason}")
+        else:
+            print("Nothing scored meaning every identity created was brand new in its batch")
+        supernode_demo(max_identifiers_hint=max(args.max_identifiers, 10))
 
 if __name__ == "__main__":
     main()

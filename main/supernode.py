@@ -60,7 +60,7 @@ class AnomalyResult:
     features: ClusterFeatures
     z_sources: dict[str. float] = field(default_factory=dict)
     mean_z: float = 0.0
-    max_features: str | None = None
+    max_z: float | None = None
     is_anomalous: bool = False
     population_ready: bool = False
     reason: str = ""

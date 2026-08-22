@@ -11,4 +11,6 @@ from collections import defaultdict
 #     print([f"has_{identifier["name"]}" for identifier in data_columns["identifiers"] if identifier["include_in_belongs_to"]])
 
     # if data_columns["signal_groups"]
-print([c for c, _ in [("screen_width", None), ("screen_length", None), ("ip_country", None), ("city", None), ("language", None)]] + ['screen_width', 'screen_length', 'ip_country', 'city', 'language'])
+# print(f"{'identity':>24}{'ids':>5}{'recs':>6}{'growth':>8}{'diversity':>11}{'burst':>8}{'mean_z':>9}{'max_z':<8}a")
+
+print("h","-" * 20, sep="\n")

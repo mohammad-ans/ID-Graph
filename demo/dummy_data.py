@@ -81,3 +81,57 @@ def build_batches() -> list[list[dict]]:
     ]
 
     return [batch1, batch2, batch3]
+
+def build_showcase_rows():
+    rows = []
+    rows.append(row("r-nadia-1", "orders", "2024-03-01T09:00:00", "Northwind Foods",
+                      email="nadia@example.com", phone="555-030-0001",
+                      screen_width="1440", screen_length="900", ip_country="us", city="Seattle", language="en-US"))
+
+    rows.append(row("r-omar-1", "orders", "2024-01-10T10:00:00", "Bluebird Books",
+                      email="omar@example.com",
+                      screen_width="1920", screen_length="1080", ip_country="us", city="Portland", language="en-US"))
+    rows.append(row("r-omar-2", "orders", "2024-03-10T15:00:00", "BulkBuy Outlet",
+                      email="omar@example.com",
+                      screen_width="390", screen_length="844", ip_country="us", city="Portland", language="en-US"))
+
+    rows.append(row("r-priya-1", "orders", "2024-05-15T11:30:00", "Northwind Foods",
+                      phone="555-030-0002",
+                      screen_width="1280", screen_length="800", ip_country="us", city="Boston", language="en-US"))
+
+    
+    rows.append(row("r-quinn-1", "orders", "2024-02-01T13:00:00", "Bluebird Books",
+                      email="quinn@example.com", phone="555-030-0003",
+                      screen_width="1536", screen_length="864", ip_country="us", city="Chicago", language="en-US"))
+    rows.append(row("r-quinn-2", "orders", "2024-02-01T13:40:00", "BulkBuy Outlet",
+                      email="quinn@example.com", phone="555-030-0003",
+                      screen_width="1536", screen_length="864", ip_country="us", city="Chicago", language="en-US"))
+
+    rows.append(row("r-rosa-1", "orders", "2024-07-20T08:15:00", "Northwind Foods",
+                      email="rosa@example.com",
+                      screen_width="414", screen_length="896", ip_country="us", city="Denver", language="en-US"))
+
+    rows.append(row("r-sam-1", "orders", "2024-01-01T09:00:00", "Northwind Foods",
+                      email="sam@example.com", phone="555-030-0004",
+                      screen_width="1600", screen_length="900", ip_country="us", city="Austin", language="en-US"))
+    rows.append(row("r-sam-2", "orders", "2024-04-01T09:00:00", "Bluebird Books",
+                      email="sam@example.com", phone="555-030-0004",
+                      screen_width="1600", screen_length="900", ip_country="us", city="Austin", language="en-US"))
+    rows.append(row("r-sam-3", "orders", "2024-08-01T09:00:00", "BulkBuy Outlet",
+                      email="sam@example.com", phone="555-030-0004",
+                      screen_width="360", screen_length="780", ip_country="us", city="Austin", language="en-US"))
+    supernode_people = [
+        ("555-040-0001", "1366", "768", "us", "Miami", "en-US"),
+        ("555-040-0002", "360", "800", "us", "Chicago", "en-US"),
+        ("555-040-0003", "1536", "864", "ca", "Toronto", "en-CA"),
+        ("555-040-0004", "414", "896", "us", "Seattle", "en-US"),
+        ("555-040-0005", "1920", "1200", "us", "Boston", "en-US"),
+        ("555-040-0006", "393", "852", "mx", "Monterrey", "es-MX"),
+    ]
+    for i, (phone, sw, sl, country, city, lang) in enumerate(supernode_people, start=1):
+        rows.append(row(f"r-showcase-promo-{i}", "orders", f"2025-06-01T08:{i*3:02d}:00", "BulkBuy Outlet",
+                          email="megasale@bulkbuy.example", phone=phone,
+                          screen_width=sw, screen_length=sl, ip_country=country, city=city, language=lang))
+
+
+    return rows
