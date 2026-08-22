@@ -135,7 +135,7 @@ def insert_review_candidates(conn: _T_conn, candidates: list[tuple], schema_name
     with conn.cursor() as cur:
         args = [(a, b, score, json.dumps(features)) for a, b, score, features in candidates]
         cur.executemany(
-            f"INSERT INTO {schema_name}.{review_table} (record_id_a, record_id_b, score, features) VALUES (%s %s %s %s)", args
+            f"INSERT INTO {schema_name}.{review_table} (record_id_a, record_id_b, score, features) VALUES (%s, %s, %s, %s)", args
         )
     conn.commit()
 
@@ -237,7 +237,7 @@ def fetch_rows(conn : _T_conn, graph_name: str, table_name: str, columns: list[s
         batch = []
         batch_no = 0
         for row in cur:
-            batch.append(GraphRow.from_db_row(dict(row, schema_cols)))
+            batch.append(GraphRow.from_db_row(dict(row), schema_cols))
             if len(batch) >= batch_size:
                 batch_no += 1
                 logger.info("Fetched graph batch %s from %s: rows=%s", batch_no, table_name, len(batch))

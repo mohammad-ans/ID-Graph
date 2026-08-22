@@ -94,7 +94,7 @@ def valid_identifiers(row : GraphRow, invalid_identifiers : dict[str, dict[str, 
 def parse_date(date : str):
     try:
         return datetime.datetime.fromisoformat(date)
-    except ValueError:
+    except (ValueError, TypeError):
         return None
 
 def cluster_identifiers(rows : list[GraphRow], static_invalid_identifiers : dict[str, set[str]], phone_gap: bool, schema_cols: dict):

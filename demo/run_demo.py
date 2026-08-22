@@ -4,7 +4,7 @@ import logging
 import sys
 from pathlib import Path
 
-MAIN_DIR = Path(__file__).resolve().parent.parent / "core"
+MAIN_DIR = Path(__file__).resolve().parent.parent / "main"
 DEMO_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(MAIN_DIR))
 sys.path.insert(0, str(DEMO_DIR))
@@ -188,7 +188,7 @@ def supernode_demo(max_identifiers_hint: int):
 def main():
     parser = argparse.ArgumentParser(description="Run demo of the identity graph")
     parser.add_argument("--max-identifiers", type=int, default=3)
-    parser.add_argument("--remap-type", default=int, default=3)
+    parser.add_argument("--remap-type", type=int, default=3)
     parser.add_argument("--adaptive-detection", action="store_true")
     args = parser.parse_args()
     logging.getLogger().setLevel(logging.WARNING)
@@ -196,7 +196,7 @@ def main():
     batches = build_batches()
     nebula = FakeNebulaClient()
 
-    print("=", * 72)
+    print("=" * 72)
     print("RampID-style identity graph -- live demo (in-memory styled Nebula)")
     print(f"max_identifiers={args.max_identifiers}  remap_type={args.remap_type}  phone_gap=one")
     print("=" * 72)

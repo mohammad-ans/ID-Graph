@@ -118,7 +118,7 @@ class GraphRow:
         raw_signals = {}
         for group in config["signal_groups"]:
             parts = [normalize_token(row.get(c)) for c in group["columns"]]
-            combined = "".join(parts)
+            combined = "".join(part for part in parts if part)
             signals[group["name"]] = sha256_text(combined) if combined else None
             for c in group["columns"]:
                 raw_signals[c] = normalize_token(row.get(c))
@@ -279,7 +279,7 @@ def identifier_type(combined : str):
 def parse_date(date : str):
     try:
         return datetime.datetime.fromisoformat(date)
-    except ValueError:
+    except (ValueError, TypeError):
         return None
 
 

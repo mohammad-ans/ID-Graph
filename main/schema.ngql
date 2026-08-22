@@ -7,15 +7,10 @@ CREATE SPACE IF NOT EXISTS audience_graph_test(
 USE audience_graph_test;
 
 CREATE TAG IF NOT EXISTS record(
-  standardized_table string,
-  provider_id string,
   source_table string,
-  record_id string,
-  transaction_id string,
+  merchant_url string,
+  merchant_name string,
   transaction_date string,
-  primary_category string,
-  secondary_category string,
-  written bool
 );
 
 CREATE TAG IF NOT EXISTS fg_hash(
@@ -25,7 +20,8 @@ CREATE TAG IF NOT EXISTS fg_hash(
 
 CREATE TAG IF NOT EXISTS identity_no(
   deprecated bool DEFAULT false,
-  merged_into string DEFAULT ""
+  merged_into string DEFAULT "",
+  resolution_method string DEFAULT "deterministic"
 );
 
 CREATE TAG IF NOT EXISTS email(value string);
@@ -43,4 +39,9 @@ CREATE EDGE IF NOT EXISTS transacted_with();
 CREATE EDGE IF NOT EXISTS belongs_to(
   start_date string,
   end_date string
+);
+CREATE EDGE IF NOT EXISTS probable_match(
+  score double,
+  method string,
+  linked_at string
 );

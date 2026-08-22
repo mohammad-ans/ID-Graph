@@ -27,7 +27,7 @@ class OnlineStats:
         delta = x - self.mean
         self.mean += delta / self.n
         delta2 = x - self.mean
-        self.m2 = delta * delta2
+        self.m2 += delta * delta2
     @property
     def variance(self):
         if self.n < 2:
@@ -82,7 +82,7 @@ def shanon_entropy(labels: list[str]):
     counts = defaultdict(int)
     for label in labels:
         counts[label] += 1
-    entropy = sum((c / n) * math.log2(c / n) for c in counts.values())
+    entropy = -sum((c / n) * math.log2(c / n) for c in counts.values())
     max_possible = math.log2(n)
     return entropy / max_possible if max_possible > 0 else 0.0
 
@@ -93,10 +93,10 @@ def temporal_burst_score(dates: list[datetime.datetime]):
         return 0.0
     window = datetime.timedelta(seconds=BURST_WINDOW_SECONDS)
     bursty = 0
-    for i, d in enumerate(dates):
-        near_prev = i > 0 and (d - dates[i - 1])
-        near_next = i < n - 1 and (dates[i + 1] - d)
-        if near_prev <= window or near_next <= window:
+    for i, d in enumerate(dates):#fixx
+        near_prev = i > 0 and (d - dates[i - 1]) <= window
+        near_next = i < n - 1 and (dates[i + 1] - d) <= window
+        if near_prev or near_next:
             bursty += 1
     return bursty / n
 

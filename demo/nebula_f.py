@@ -10,7 +10,7 @@ class Graph:
     in_edges: dict = field(default_factory=lambda: defaultdict(lambda: defaultdict(dict)))
 
     def insert_edge(self, edge_tpye: str, src: str, dst: str, props: dict):
-        self.in_edges[dst][edge_tpye][dst] = props
+        self.in_edges[dst][edge_tpye][src] = props
         self.out_edges[src][edge_tpye][dst] = props
 
     def insert_vertex(self, vid: str, tag: str, props: dict):
@@ -18,7 +18,7 @@ class Graph:
 
     def delete_edge(self, edge_type: str, src: str, dst: str):
         self.out_edges.get(src, {}).get(edge_type, {}).pop(dst, None)
-        self.in_edges.get(src, {}).get(edge_type, {}).pop(src, None)
+        self.in_edges.get(dst, {}).get(edge_type, {}).pop(src, None)
 
     def get_vertex_prop(self, vid: str, prop: str):
         for props in self.vertices.get(vid, {}).values():
@@ -43,7 +43,7 @@ class Row:
 class Result:
     def __init__(self, columns: list[str], rows: list[list]):
         self.columns = columns
-        self.rows = rows
+        self._rows = rows
 
     def is_succeeded(self):
         return True
@@ -52,18 +52,18 @@ class Result:
         return ""
     
     def row_size(self):
-        return len(self.rows)
+        return len(self._rows)
     
     def row_values(self, i):
-        return[Val(v) for v in self.rows[i]]
+        return[Val(v) for v in self._rows[i]]
 
     def rows(self):
-        return[Row(v) for v in self.rows]
+        return[Row(v) for v in self._rows]
 
     def column_index(self, name):
         return self.columns.index(name)
 
-_VID_RE = re.compile(r'"((?:[^"\\]\\.)*)"')
+_VID_RE = re.compile(r'"((?:[^"\\]|\\.)*)"')
 
 def parse_vid_list(text: str):
     return [m.group(1) for m in _VID_RE.finditer(text)]
@@ -125,7 +125,7 @@ class FakeNebulaClient:
         if not statement:
             return None
         self.statement_log.append(statement)
-        self.handle(statement)
+        return self.handle(statement)
 
     def execute_many(self, statements: list[str], chunk_size: int = 100):
         for statement in statements:
@@ -146,7 +146,7 @@ class FakeNebulaClient:
             return self.update_vertex(statement)
         if upper.startswith("DELETE EDGE"):
             return self.delete_edge(statement)
-        if upper.startswith("GO FORM"):
+        if upper.startswith("GO FROM"):
             return self.go(statement)
         raise NotImplementedError(f"Statement not found")
 
@@ -221,7 +221,7 @@ class FakeNebulaClient:
     def go(self, statement: str, carry: list[dict] | None = None):
         stage, _, piped = statement.partition("|")
         stage = stage.strip()
-        m = re.match(r'GO FROM\s+(?P<from>.+?)\s+OVER\s+(?P<edges[\w,]+)'
+        m = re.match(r'GO FROM\s+(?P<from>.+?)\s+OVER\s+(?P<edges>[\w,]+)'
                      r'(?P<reversely>\s+REVERSELY)?'
                      r'(?:\s+WHERE\s+(?P<where>.+?))?'
                      '\s+YIELD\s+(?P<yield>.+)$', stage, re.IGNORECASE | re.DOTALL)
