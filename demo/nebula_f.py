@@ -134,15 +134,32 @@ class FakeNebulaClient:
         if graph is None:
             self.graph = Graph()
         self.statement_log: list[str] = []
-        self.declared_tags: dict[str, set[str]] | None = None
-        self.declared_edges: dict[str, set[str]] | None = None
+        self.tags_props: dict[str, set[str]] | None = None
+        self.edges_props: dict[str, set[str]] | None = None
         if schema_path:
             self.load_schema(schema_path)
 
     def load_schema(self, schema_path: str):
         text = Path(schema_path).read_text()
-        self.declared_tags, self.declared_edges = parse_schema(text)
+        self.tags_props, self.edges_props = parse_schema(text)
 
+    def check_edge(self, edge: str, prop_names: set[str]):
+        if self.edges_props is None:
+            return
+        if edge not in self.edges_props:
+            raise NotImplementedError(f"This edge {edge} is not specified in the schema")
+        diff = prop_names - self.edges_props[edge]
+        if diff:
+            raise NotImplementedError(f"Schema def include: {self.edges_props[edge]} while {prop_names} were given")
+
+    def check_tag(self, tag: str, prop_names: set[str]):
+        if self.tags_props is None:
+            return
+        if tag not in self.tags_props:
+            raise NotImplementedError(f"The tag {tag} is not specified in the schema")
+        diff = prop_names - self.tags_props[tag]
+        if diff:
+            raise NotImplementedError(f"Schema def include: {self.tags_props[tag]} while {prop_names} were given")
     def __enter__(self):
         return self
 
@@ -192,6 +209,7 @@ class FakeNebulaClient:
         offset = 0
         for tag, cols in tag_specs:
             col_names = [c.strip() for c in cols.split(",")] if cols.strip() else []
+            self.check_tag(tag, set(col_names))
             n = len(col_names)
             vals = all_values[offset: offset + n]
             offset += n
@@ -209,6 +227,7 @@ class FakeNebulaClient:
         dest = vids[1]
         vals_match = re.search(r':\(([^)]*)\)', values_part)
         col_names = [c.strip() for c in cols.split(",")] if cols.strip() else []
+        self.check_edge(edge_type, set(col_names))
         val_items = []
         if vals_match and vals_match.group(1).strip():
             val_items = split_top_level(vals_match.group(1))
@@ -222,6 +241,8 @@ class FakeNebulaClient:
         vid_part = m.group(2)
         set_part = m.group(3)
         src, dst = parse_vid_list(vid_part)
+        
+        self.check_edge(edge_type, {assignment.split("=", 1)[0].strip() for assignment in split_top_level(set_part)})
         props = self.graph.out_edges.get(src, {}).get(edge_type, {}).get(dst, {})
         for assignment in split_top_level(set_part):
             col, val = assignment.split("=", 1)
@@ -232,11 +253,16 @@ class FakeNebulaClient:
         m = re.match(r'UPDATE VERTEX\s+(.+?)SET\s(.+)', statement, re.IGNORECASE | re.DOTALL)
         vid = _VID_RE.match(m.group(1).strip()).group(1)
         set_part = m.group(2)
+        tagCol_Val = {}
         for assignment in split_top_level(set_part):
             #colFull is tag.col
             colFull, val = assignment.split("=", 1)
             tag, col = colFull.strip().split(".", 1)
-            self.graph.vertices[vid].setdefault(tag, {})[col] = parse_ngql_lieral(val.strip())
+            tagCol_Val.setdefault(tag, {})[col] = val.strip()
+        for tag, cols in tagCol_Val.items():
+            self.check_tag(tag, set(cols.keys()))
+            for col, val in cols.items():
+                self.graph.vertices[vid].setdefault(tag, {})[col] = parse_ngql_lieral(val)
         return Result([], [])
 
     def delete_edge(self, statement):
