@@ -3,7 +3,7 @@ import math
 from dataclasses import dataclass, field as dc_field
 from datetime import datetime
 import numpy
-from graph_model import GraphRow
+from graph_model import GraphRow, record_vid
 
 
 TIME_SLOTS = (("temporal_same_day", 1), ("temporal_same_week", 7), ("temporal_same_month", 30))
@@ -126,6 +126,31 @@ def classify(score, config):
         return "review"
     return "reject"
 
+
+@dataclass
+class PoolRow:
+    record_id: str
+    raw_signals: dict[str, str | None]
+    attributes: dict[str, str | None]
+
+    @property
+    def vertex_id(self):
+        source_table = self.attributes.get("source_table") or "Unknown"
+        return record_vid(source_table, self.record_id)
+
+
+def generate_cross_batch_candidates(rows: list[GraphRow], pool_rows: list[PoolRow], max_block_size: int = 200):
+    new_pairs = generate_candidates(rows, max_block_size)
+    pool_block = {}
+    for row in pool_rows:
+        pool_block.setdefault(blocking_key(row), []).append(row)
+    cross_pairs = []
+    for row in rows:
+        members = pool_block.get(blocking_key(row), [])[:max_block_size]
+        for pool_row in members:
+            cross_pairs.append((row, pool_row))
+    return new_pairs + cross_pairs
+    
 class SimpleUnionFind:
     def __init__(self):
         self.parent: dict[str, str] = {}
@@ -195,14 +220,18 @@ class ProbabilisticLinking:
     review_candidates: list[tuple[GraphRow, GraphRow, float, dict]]
     rejected_count: int
 
-def resolve_prolly(rows: list[GraphRow], schema_cols: dict, model: FellegiSunterModel | None = None):
+def resolve_prolly(rows: list[GraphRow], schema_cols: dict, model: FellegiSunterModel | None = None, pool_rows: list[PoolRow] | None = None):
     if model is None:
         model = FellegiSunterModel()
     config = parse_config(schema_cols)
     am_pairs = []
     review_pairs = []
     rejected = 0
-    candidates = generate_candidates(rows)
+    candidates = None
+    if pool_rows:
+        candidates = generate_cross_batch_candidates(rows, pool_rows)
+    else:
+        candidates = generate_candidates(rows)
     for row_a, row_b in candidates:
         features = pair_features(row_a, row_b, schema_cols)
         score = model.score(features)
