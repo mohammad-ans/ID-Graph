@@ -46,7 +46,7 @@ class SyncConfig:
     max_transactions: int
     max_identifiers: int
     batch_size: int
-    max_records: int | None
+    max_records: int
     dry_run: bool
     phone_gap: bool
     remap_type: int

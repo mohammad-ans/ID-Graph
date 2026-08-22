@@ -12,11 +12,11 @@ sys.path.insert(0, str(DEMO_DIR))
 import yaml
 from nebula_f import FakeNebulaClient
 from dummy_data import build_batches, build_showcase_rows
-from main.graph_model import GraphRow, belongs_to_identity,  add_probable_identity, vid as graph_vid, row_to_ngql
-from main.batch_id_union import cluster_identifiers, distinct_identifiers
-from main.sync_audience_graph import fetch_identities, write_batch, write_identity_queries
-from main.probability import prolly_enabled, resolve_prolly
-from main.supernode import SupernodeAnomalyScorer
+from graph_model import GraphRow, belongs_to_identity,  add_probable_identity, vid as graph_vid, row_to_ngql, add_identity
+from batch_id_union import cluster_identifiers, distinct_identifiers
+from sync_audience_graph import fetch_identities, write_batch, write_identity_queries
+from probability import prolly_enabled, resolve_prolly
+from supernode import SupernodeAnomalyScorer
 
 RECORD_LABELS = {
     "r-alice-1": "Alice", "r-alice-2": "Alice", "r-dave-1": "Dave",  "r-dave-2": "Dave", "r-bob-1": "Bob", "r-carol-1": "Carol",
@@ -56,6 +56,8 @@ def run_batch(nebula, schema_cols, raw_rows, static_invalid, max_identifiers, re
         for group_rows, score in prob_result.auto_merge_groups:
             group_statements, _ = add_probable_identity(group_rows, score)
             statements.extend(group_statements)
+    # for row in statements:
+    #     print(row)
     write_batch(nebula, rows, max_workers=2)
     write_identity_queries(nebula, statements)
     print(f"{len(rows)} record written, {len(statements)} identity-graph statements")
@@ -149,7 +151,7 @@ def group_rows(rows: list[dict]):
         groups.setdefault(key, []).append(row)
     return groups
 
-SHOWCASE_ORDER = {"nadia", "omar", "priya", "quinn", "rosa", "sam", "showcase_promo"}
+SHOWCASE_ORDER = ["nadia", "omar", "priya", "quinn", "rosa", "sam", "showcase_promo"]
 
 def supernode_demo(max_identifiers_hint: int):
     print("\n" + "=" * 72)
@@ -166,10 +168,10 @@ def supernode_demo(max_identifiers_hint: int):
         for row in rows:
             nebula.execute_many(row_to_ngql(row))
             identifiers.update(graph_vid(id_type, value) for id_type, value in row.identifiers.items() if value)
-        statements, identity = add_probable_identity(identifiers)
+        statements, identity = add_identity(identifiers)
         nebula.execute_many(statements)
         identity_vids[key] = identity
-    header = f"{"identity":<24}{"idc":>5}{"recs":>6}{"growth":>8}{"diversity":>11}{"burst":>8}{"mean_z":>9}{"max_z":>8}  verdict"
+    header = f"{'identity':<24}{'idc':>5}{'recs':>6}{'growth':>8}{'diversity':>11}{'burst':>8}{'mean_z':>9}{'max_z':>8}  verdict"
     print(header,"-" * len(header), sep="\n")
     for key in SHOWCASE_ORDER:
         label = key.capitalize()
@@ -178,7 +180,7 @@ def supernode_demo(max_identifiers_hint: int):
         result = scorer.score(identity_vids[key], nebula, schema_cols)
         f = result.features
         verdict = "ANOMALOUS" if result.is_anomalous else ("warming up" if not result.population_ready else "normal")
-        print(f"{label:<24}{f.identifier_count:>5}{f.record_count:>6}{f.identifier_growth:>8}{f.signal_diversity:>11.2f}{f.temporal_burst:>8.2f}{result.mean_z:>9.2f}{result.max_z}  {verdict}")
+        print(f"{label:<24}{f.identifier_count:>5}{f.record_count:>6}{f.identifier_growth:>8}{f.signal_diversity:>11.2f}{f.temporal_burst:>8.2f}{result.mean_z:>9.2f}{result.max_z:>8.2f}  {verdict}")
 
     promo_result = scorer.history[-1]
     by_static = promo_result.features.identifier_count > max_identifiers_hint
@@ -210,7 +212,7 @@ def main():
     for i, batch in enumerate(batches, start=1):
         print(f"\n Batch {i}: {len(batch)} incoming rows \n")
         result = run_batch(nebula, schema_cols, batch, static_invalid, args.max_identifiers, args.remap_type, phone_gap=True, scorer=scorer)
-        print(f"Batch clusters: {result["clusters"]}\n")
+        print(f"Batch clusters: {result['clusters']}\n")
         if result["invalid_declared"]:
             invalid_identifiers = pairs_to_static_invalid(result["invalid_declared"])
             for id_type, values in invalid_identifiers.items():
@@ -221,7 +223,7 @@ def main():
 
         if result["unresolvable_count"]:
             prob_result = result["prob_result"]
-            print(f"\n{result["unresolvable_count"]} could not be resolved deterministicly\n")
+            print(f"\n{result['unresolvable_count']} could not be resolved deterministicly\n")
             if prob_result is None:
                 print(" Probability resolver is off in the schema yaml file\n")
             else:
@@ -237,7 +239,7 @@ def main():
     print("Final resolved identities: \n")
     roster = tracker.roster()
     for vid in sorted(roster, key=lambda v: (-len(roster[v]), roster[v])):
-        print(f" {vid[:24]:24s} {", ".join(roster[vid]) if roster[vid] else "No active identifiers"}\n")
+        print(f" {vid[:24]:24s} {', '.join(roster[vid]) if roster[vid] else 'No active identifiers'}\n")
 
     orphans = tracker.orphaned_records()
     if orphans:
@@ -258,7 +260,7 @@ def main():
 
     bob_id = next((v for v, person in roster.items() if person == ["Bob"]), None)
     carol_id = next((v for v, person in roster.items() if person == ["Carol"]), None)
-    dave_id = next((v for v, person in roster.items() if person == ["Dave"]), None)
+    dave_id = next((v for v, person in roster.items() if set(person) == {"Dave"}), None)
     promo_people = [v for v, person in roster.items() if any("promo" in x for x in person)]
 
     if bob_id and carol_id and bob_id != carol_id:

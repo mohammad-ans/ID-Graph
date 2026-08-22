@@ -59,7 +59,7 @@ class Val:
 
 class Row:
     def __init__(self, values):
-        self.values = [Val(values)]
+        self.values = [Val(v) for v in values]
 
 class Result:
     def __init__(self, columns: list[str], rows: list[list]):
@@ -124,7 +124,7 @@ def split_top_level(text: str, sep: str = ","):
                 continue
         buffer.append(chr)
     if buffer:
-        parts.append(",".join(buffer))
+        parts.append("".join(buffer))
     return [p.strip() for p in parts]
 
 class FakeNebulaClient:

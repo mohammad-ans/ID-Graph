@@ -103,7 +103,7 @@ def cluster_identifiers(rows : list[GraphRow], static_invalid_identifiers : dict
     invalid_identifiers.add_static_identifiers(static_invalid_identifiers)
     invalid_identifiers.invalid_relative_newD(rows)
     logger.info(
-        f"Fetched invalid identifiers... Total emails: {len(invalid_identifiers.invalid_identifiers["email"])}\nTotal phone records: {len(invalid_identifiers.invalid_identifiers["phone"])}"
+        f"Fetched invalid identifiers... Total emails: {len(invalid_identifiers.invalid_identifiers['email'])}\nTotal phone records: {len(invalid_identifiers.invalid_identifiers['phone'])}"
     )
 
     uf = UnionFind()
