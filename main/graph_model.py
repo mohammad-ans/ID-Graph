@@ -463,3 +463,39 @@ def rows_to_ngql(rows: Iterable[GraphRow]) -> str:
     for row in rows:
         statements.extend(row_to_ngql(row))
     return ";\n".join(statements) + (";" if statements else "")
+
+def get_curr_identity(identifier_vid: str, nebula: NebulaClient):
+    result = nebula.execute(
+        f'GO FROM "{identifier_vid}" OVER belongs_to WHERE properties(edge).end_date == "" YIELD dst(edge) AS identity_vid'
+    )
+    for i in range(result.row_size()):
+        value = result.row_values(i)[0].cast()
+        if value:
+            return value
+    return None
+
+def get_curr_pIdentity(record_id: str, nebula: NebulaClient):
+    result = nebula.execute(
+        f'GO FROM "{record_id}" OVER probable_match YIELD dst(edge) AS identity_vid'
+    )
+    for i in range(result.row_size()):
+        value = result.row_values(i)[0].cast()
+        if value:
+            return value
+    return None
+
+def get_identities(rows: list[GraphRow], nebula: NebulaClient):
+    resolved = {}
+    for row in rows:
+        identity = None
+        for id_type, value in row.identifiers.items():
+            if value is None:
+                continue
+            identity = get_curr_identity(vid(id_type, value), nebula)
+            if identity:
+                resolved[row.record_id] = (identity, "deterministic")
+                continue
+            probable = get_curr_pIdentity(row.vertex_id, nebula)
+            if probable:
+                resolved[row.record_id] = "probabilistic"
+    return resolved

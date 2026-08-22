@@ -10,7 +10,7 @@ import psycopg2
 import psycopg2.extras
 from psycopg2.extensions import connection as _T_conn
 from config import NebulaConfig, PostgresConfig, SyncConfig
-from graph_model import GraphRow, row_to_ngql, belongs_to_identity, add_probable_identity
+from graph_model import GraphRow, row_to_ngql, belongs_to_identity, add_probable_identity, get_identities
 from nebula_client import NebulaClient
 from batch_id_union import cluster_identifiers, distinct_identifiers
 from probability import resolve_prolly, prolly_enabled
@@ -51,6 +51,44 @@ def connect_postgres(config: PostgresConfig):
         keepalives_interval=10,
         keepalives_count=5,
     )
+
+def ensure_main_table(conn: _T_conn, schema_name: str, table_name: str = "record_identities"):
+    logger.info(f"Ensuring {schema_name}.{table_name} exists")
+    with conn.cursor() as cursor:
+        cursor.execute(
+            f"""CREATE TABLE IF NOT EXISTS {schema_name}.{table_name}(
+                record_id text PRIMARY KEY,
+                identity_no text NOT NULL,
+                resolution_method text NOT NULL DEFAULT 'deterministic',
+                updated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );"""
+        )
+    conn.commit()
+    with conn.cursor() as cursor:
+        cursor.execute(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schemas = %s AND table_name = %s)", (schema_name, table_name)
+        )
+        exists = cursor.fetchone()
+        if not exists:
+            raise RuntimeError("main table of identities not found, check postgres")
+    logger.info(f"{schema_name}.{table_name} done")
+
+def insert_identities(conn: _T_conn, resolved: dict[str, tuple[str, str]], schema_name: str, table_name: str = "record_identities"):
+    if not resolved:
+        return
+    args = [(record_id, identity, method) for record_id, (identity, method) in resolved.items()]
+    with conn.cursor as cursor:
+        psycopg2.extras.execute_values(cursor,
+            f"""
+                INSERT INTO {schema_name}.{table_name} (record_id, identity_no, resolution_method) 
+                VALUES %s 
+                ON CONFLICT (record_id) DO UPDATE SET 
+                identity_no = EXCLUDED.identity_no,
+                resolution_method = EXCLUDED.resolution_method
+            """, args, page_size=1000
+        )
+    conn.commit()
+    logger.info(f"Completed updating the main identities table with {len(resolved)} updations")
 
 def ensure_log_tables(conn: _T_conn, schema_name: str):
     logger.info(f"Ensuring {schema_name}.merge_logs and {schema_name}.remap_logs exist")
@@ -402,6 +440,8 @@ def sync_table(
         
         write_batch(nebula, batch, max_workers=sync_config.write_concurrency)
         write_identity_queries(nebula, statements)
+        resolved = get_identities(batch, nebula)
+        insert_identities(audit_conn, resolved, sync_config.schema_name)
         mark_synced(audit_conn, graph_name, batch, sync_config.schema_name, sync_config.sync_table)
         total += len(batch)
         logger.info("Synced %s rows from %s (running total)", total, table_name)
@@ -467,6 +507,7 @@ def run_sync(
     with connect_postgres(pg_config) as read_conn, connect_postgres(pg_config) as audit_conn:
         ensure_audit_table(audit_conn, sync_config.schema_name, sync_config.sync_table)
         ensure_log_tables(audit_conn, sync_config.schema_name)
+        ensure_main_table(audit_conn, sync_config.schema_name)
         if sync_config.remap_type == 3:
             ensure_invalids_table(audit_conn, sync_config.schema_name)
         if prolly_enabled(schema_cols):
