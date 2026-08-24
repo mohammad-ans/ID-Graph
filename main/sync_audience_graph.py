@@ -13,7 +13,7 @@ from config import NebulaConfig, PostgresConfig, SyncConfig
 from graph_model import GraphRow, row_to_ngql, belongs_to_identity, add_probable_identity, get_identities
 from nebula_client import NebulaClient
 from batch_id_union import cluster_identifiers, distinct_identifiers
-from probability import resolve_prolly, prolly_enabled, PoolRow, blocking_key
+from probability import resolve_prolly, prolly_enabled, PoolRow, blocking_key, FellegiSunterModel
 import re
 import json
 
@@ -302,15 +302,55 @@ def insert_candidate_history(conn: _T_conn, scored: list[tuple], schema_name: st
         cur.executemany(f"""
             INSERT INTO {schema_name}.{history_table}
             (record_id_a, record_id_b, score, features, outcome)
-            VALUES(%s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s)
         """, args
         )
     conn.commit()
 
-def fetch_candidate_history(conn: _T_conn, schema_name: str, history_table: str = "fellegi_sunter_candidate_history", limit: int = 5000):
+def fetch_candidate_features(conn: _T_conn, schema_name: str, history_table: str = "fellegi_sunter_candidate_history", limit: int = 5000):
     with conn.cursor() as cur:
         cur.execute(f"SELECT features FROM {schema_name}.{history_table} ORDER_BY scored_at DESC LIMIT %S", (limit, ))
     return [row[0] for row in cur.fetchall()]
+
+def count_candidates_history(conn: _T_conn, schema_name: str, history_table: str = "fellegi_sunter_candidate_history"):
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT COUNT(*) FROM {schema_name}.{history_table}")
+        return cur.fetchone()[0]
+
+def ensure_model_params(conn: _T_conn, schema_name: str, params_table: str = "fellegi_sunter_model_params"):
+    logger.info(f"Ensuring {schema_name}.{params_table} exists")
+    with conn.cursor() as cur:
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {schema_name}.{params_table} (
+                param_id BIGSERIAL PRIMARY KEY,
+                m_probs JSONB NOT NULL,
+                u_probs JSONB NOT NULL,
+                prior_match_probability DOUBLE PRECISION NOT NULL,
+                history_rows_used INTEGER NOT NULL,
+                fitted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+    conn.commit()
+    logger.info("Model params done")
+
+def load_latest_model(conn: _T_conn, schema_name: str, params_table: str = "fellegi_sunter_model_params"):
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT m_probs, u_probs, prior_match_probability FROM {schema_name}.{params_table} ORDER BY fitted_at DESC LIMIT 1")
+        row = cur.fetchone()
+    if row is None:
+        return None
+    m_probs, u_probs, prior = row
+    return FellegiSunterModel.from_dict({"m_probs": m_probs, "u_probs" : u_probs, "prior_match_probability": prior})
+
+def save_model(conn: _T_conn, model, history_rows_used: int, schema_name: str, params_table: str = "fellegi_sunter_model_params"):
+    d = model.to_dict()
+    with conn.cursor() as cur:
+        cur.execute(f"""
+            INSERT INTO {schema_name}.{params_table}
+            (m_probs, u_probs, prior_match_probability, history_rows_used)
+            VALUES (%s, %s, %s, %s)
+        """, (json.dumps(d["m_probs"]), json.dumps(d["u_probs"]), d["prior_match_probability"], history_rows_used) )
+    conn.commit()
 
 def insert_invalid_identifiers(conn : _T_conn, identifiers: list[tuple], schema_name : str, invalid_table : str = "graph_invalid_identifiers"):
     with conn.cursor() as cursor:
@@ -479,7 +519,8 @@ def sync_table(
     table_name: str,
     sync_config: SyncConfig,
     schema_cols: dict | None = None,
-    cols_list: list[str] = []
+    cols_list: list[str] = [],
+    prob_model: FellegiSunterModel | None = None
 ) -> SyncResult:
     total = 0
     logger.info(
@@ -532,13 +573,16 @@ def sync_table(
         if sync_config.remap_type == 3 and invalid_identifiers_declare:
             insert_invalid_identifiers(audit_conn, invalid_identifiers_declare, sync_config.schema_name)
         if unresolvable and prolly_enabled(schema_cols):
-            prob_result = resolve_prolly(unresolvable, schema_cols)
+            blocking_keys = {blocking_key(row) for row in unresolvable}
+            pool_candidates = fetch_pool_candidates(audit_conn, blocking_key, sync_config.schema_name)
+            prob_result = resolve_prolly(unresolvable, schema_cols, prob_model, pool_rows=pool_candidates)
             for group_rows, score in prob_result.auto_merge_groups:
                 group_statements, _ = add_probable_identity(group_rows, score)
                 statements.extend(group_statements)
             if prob_result.review_candidates:
                 review_rows = [(row_a.record_id, row_b.record_id, score, features) for row_a, row_b, score, features in prob_result.review_candidates]
                 insert_review_candidates(audit_conn, review_rows, sync_config.schema_name)
+
             logger.info(
                 f"Probabilistic linkage for {table_name}: {len(unresolvable)} converted to {len(prob_result.auto_merge_groups)} auto merges and {len(prob_result.review_candidates)} review candidates and {prob_result.rejected_count} rejected"
             )
@@ -615,17 +659,21 @@ def run_sync(
         ensure_main_table(audit_conn, sync_config.schema_name)
         if sync_config.remap_type == 3:
             ensure_invalids_table(audit_conn, sync_config.schema_name)
-        if prolly_enabled(schema_cols):
+        if schema_cols and prolly_enabled(schema_cols):
             ensure_review_queue(audit_conn, sync_config.schema_name)
+            ensure_candidate_pool(audit_conn, sync_config.schema_name)
+            ensure_candidate_history(audit_conn, sync_config.schema_name)
+            ensure_model_params(audit_conn, sync_config.schema_name)
+        prob_model = None
         if sync_config.dry_run:
             for table in table_list:
-                result = sync_table(read_conn, audit_conn, None, nebula_config.space, table, sync_config, schema_cols, cols_list)
+                result = sync_table(read_conn, audit_conn, None, nebula_config.space, table, sync_config, schema_cols, cols_list, prob_model)
                 results[table] = result.rows_synced
             return results
 
         with NebulaClient(nebula_config) as nebula:
             for table in table_list:
-                result = sync_table(read_conn, audit_conn, nebula, nebula_config.space, table, sync_config, schema_cols, cols_list)
+                result = sync_table(read_conn, audit_conn, nebula, nebula_config.space, table, sync_config, schema_cols, cols_list, prob_model)
                 logger.info("Finished %s: %s rows synced", result.table_name, result.rows_synced)
                 results[table] = result.rows_synced
 

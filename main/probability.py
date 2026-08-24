@@ -118,6 +118,13 @@ class FellegiSunterModel:
         self.u_probs = {f: float(v) for f, v in zip(fields, u)}
         self.prior_match_prolly = float(pi)
         return self
+    
+    @classmethod
+    def from_dict(cls, d):
+        return cls(m_probs=d["m_probs"], u_probs=d["u_probs"], prior_match_prolly=d["prior_match_probability"])
+
+    def to_dict(self):
+        return {"m_probs": self.m_probs, "u_probs": self.u_probs, "prior_match_probability": self.prior_match_prolly}
 
 def classify(score, config):
     if score >= config["auto_merge_threshold"]:
