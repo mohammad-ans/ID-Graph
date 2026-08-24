@@ -13,7 +13,7 @@ from config import NebulaConfig, PostgresConfig, SyncConfig
 from graph_model import GraphRow, row_to_ngql, belongs_to_identity, add_probable_identity, get_identities
 from nebula_client import NebulaClient
 from batch_id_union import cluster_identifiers, distinct_identifiers
-from probability import resolve_prolly, prolly_enabled, PoolRow, blocking_key, FellegiSunterModel
+from probability import resolve_prolly, prolly_enabled, PoolRow, blocking_key, FellegiSunterModel, should_refit
 import re
 import json
 
@@ -77,7 +77,7 @@ def insert_identities(conn: _T_conn, resolved: dict[str, tuple[str, str]], schem
     if not resolved:
         return
     args = [(record_id, identity, method) for record_id, (identity, method) in resolved.items()]
-    with conn.cursor as cur:
+    with conn.cursor() as cur:
         psycopg2.extras.execute_values(cur,
             f"""
                 INSERT INTO {schema_name}.{table_name} (record_id, identity_no, resolution_method) 
@@ -197,7 +197,7 @@ def ensure_candidate_pool(conn: _T_conn, schema_name: str, pool_table: str = "un
     conn.commit()
     logger.info("Candidate pool table done")
 
-def insert_pool(conn: _T_conn, rows: list, schema_name: str, pool_table: str = "unresolved_candidate_pool"):
+def insert_into_pool(conn: _T_conn, rows: list, schema_name: str, pool_table: str = "unresolved_candidate_pool"):
     if not rows:
         return
     with conn.cursor() as cur:
@@ -226,11 +226,11 @@ def remove_from_pool(conn: _T_conn, records_ids: set[str], schema_name: str, poo
 def fetch_invalid(conn : _T_conn, tablename : str, max_transactions : int, remap_type : int, schema_name : str, schema_cols: dict, invalid_table : str = "graph_invalid_identifiers"):
     logger.info("Getting supernode identifiers from database")
     invalid_identifiers = defaultdict(set)
-    cursor = conn.cursor()
+    cur = conn.cursor()
     for identifier in schema_cols["identifiers"]:
         col = identifier["column"]
         validate_column_name(col)
-        cursor.execute(
+        cur.execute(
             f"""
             SELECT {col}
             FROM {schema_name}.{tablename}
@@ -239,18 +239,18 @@ def fetch_invalid(conn : _T_conn, tablename : str, max_transactions : int, remap
             HAVING COUNT(*) > {max_transactions};
             """
         )
-        identifiers = set(row[0] for row in cursor.fetchall())
+        identifiers = set(row[0] for row in cur.fetchall())
         invalid_identifiers[col].update(identifiers)
     if remap_type == 3:
-        cursor.execute(
+        cur.execute(
             f"""
             SELECT identifier_type, identifier
             FROM {schema_name}.{invalid_table};
             """
         )
-        for row in cursor.fetchall():
+        for row in cur.fetchall():
             invalid_identifiers[row[0]].add(row[1])
-    cursor.close()
+    cur.close()
     return invalid_identifiers
 
 def fetch_pool_candidates(conn:_T_conn, blocking_keys: set[tuple], schema_name: str, pool_table: str = "unresolved_candidate_pool"):
@@ -353,8 +353,8 @@ def save_model(conn: _T_conn, model, history_rows_used: int, schema_name: str, p
     conn.commit()
 
 def insert_invalid_identifiers(conn : _T_conn, identifiers: list[tuple], schema_name : str, invalid_table : str = "graph_invalid_identifiers"):
-    with conn.cursor() as cursor:
-        cursor.execute(
+    with conn.cursor() as cur:
+        cur.execute(
             f"""
                 INSERT INTO {schema_name}.{invalid_table} (identifier_type, identifier)
                 VALUES {", ".join(f"(%s, %s)" for _ in identifiers)}
@@ -574,7 +574,7 @@ def sync_table(
             insert_invalid_identifiers(audit_conn, invalid_identifiers_declare, sync_config.schema_name)
         if unresolvable and prolly_enabled(schema_cols):
             blocking_keys = {blocking_key(row) for row in unresolvable}
-            pool_candidates = fetch_pool_candidates(audit_conn, blocking_key, sync_config.schema_name)
+            pool_candidates = fetch_pool_candidates(audit_conn, blocking_keys, sync_config.schema_name)
             prob_result = resolve_prolly(unresolvable, schema_cols, prob_model, pool_rows=pool_candidates)
             for group_rows, score in prob_result.auto_merge_groups:
                 group_statements, _ = add_probable_identity(group_rows, score)
@@ -582,6 +582,9 @@ def sync_table(
             if prob_result.review_candidates:
                 review_rows = [(row_a.record_id, row_b.record_id, score, features) for row_a, row_b, score, features in prob_result.review_candidates]
                 insert_review_candidates(audit_conn, review_rows, sync_config.schema_name)
+            remove_from_pool(audit_conn, prob_result.matched_pool_records, sync_config.schema_name)
+            insert_into_pool(audit_conn, prob_result.unmatched_new, sync_config.schema_name)
+            insert_candidate_history(audit_conn, prob_result.all_scored, sync_config.schema_name)
 
             logger.info(
                 f"Probabilistic linkage for {table_name}: {len(unresolvable)} converted to {len(prob_result.auto_merge_groups)} auto merges and {len(prob_result.review_candidates)} review candidates and {prob_result.rejected_count} rejected"
@@ -665,6 +668,14 @@ def run_sync(
             ensure_candidate_history(audit_conn, sync_config.schema_name)
             ensure_model_params(audit_conn, sync_config.schema_name)
         prob_model = None
+        if schema_cols and prolly_enabled(schema_cols):
+            prob_model = load_latest_model(audit_conn, sync_config.schema_name)
+            count = count_candidates_history(audit_conn, sync_config.schema_name)
+            if should_refit(count):
+                feature_rows = fetch_candidate_features(audit_conn, sync_config.schema_name)
+                prob_model.fit_em(feature_rows)
+                save_model(audit_conn, prob_model, count, sync_config.schema_name)
+            
         if sync_config.dry_run:
             for table in table_list:
                 result = sync_table(read_conn, audit_conn, None, nebula_config.space, table, sync_config, schema_cols, cols_list, prob_model)
@@ -704,16 +715,6 @@ def parse_args():
     parser.add_argument("--sync-table", default=None)
     return parser.parse_args()
 
-# def parse_identifer_types(schema_cols: str):
-#     types = []
-#     for identifier in schema_cols.split(","):
-#         identifier = identifier.strip().lower()
-#         try:
-#             types.append(IdentifierType(identifier))
-#         except ValueError:
-#             valid = [t.value for t in IdentifierType]
-#             raise argparse.ArgumentTypeError(f"Unknow Identifier type '{identifier}. Valid {valid}'")
-#         return types
 
 def main():
     args = parse_args()

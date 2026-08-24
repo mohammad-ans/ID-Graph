@@ -3,7 +3,6 @@ from uuid import uuid4
 import hashlib
 import re
 from dataclasses import dataclass, field
-from collections import defaultdict
 import datetime
 from decimal import Decimal
 from typing import Iterable, TYPE_CHECKING

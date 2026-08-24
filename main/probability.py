@@ -126,6 +126,11 @@ class FellegiSunterModel:
     def to_dict(self):
         return {"m_probs": self.m_probs, "u_probs": self.u_probs, "prior_match_probability": self.prior_match_prolly}
 
+MIN_HISTORY = 30
+
+def should_refit(history_row_count: int, min_history: int = MIN_HISTORY):
+    return history_row_count >= min_history
+
 def classify(score, config):
     if score >= config["auto_merge_threshold"]:
         return "auto_merge"
@@ -234,6 +239,9 @@ class ProbabilisticLinking:
     auto_merge_groups: list[list[GraphRow]]
     review_candidates: list[tuple[GraphRow, GraphRow, float, dict]]
     rejected_count: int
+    matched_pool_records: set[str] = dc_field(default_factory=set)
+    unmatched_new: list[GraphRow] = dc_field(default_factory=list)
+    all_scored: list[tuple[str, str, float, dict, str]] = dc_field(default_factory=list)
 
 def resolve_prolly(rows: list[GraphRow], schema_cols: dict, model: FellegiSunterModel | None = None, pool_rows: list[PoolRow] | None = None):
     if model is None:
@@ -247,14 +255,24 @@ def resolve_prolly(rows: list[GraphRow], schema_cols: dict, model: FellegiSunter
         candidates = generate_cross_batch_candidates(rows, pool_rows)
     else:
         candidates = generate_candidates(rows)
+    matched_new = set()
+    matched_pool = set()
+    all_scored = []
     for row_a, row_b in candidates:
         features = pair_features(row_a, row_b, schema_cols)
         score = model.score(features)
         outcome = classify(score, config)
+        all_scored.append((row_a.record_id, row_b.record_id, score, features, outcome))
         if outcome == "auto_merge":
             am_pairs.append((row_a, row_b, score, features))
+            matched_new.add(row_a.record_id)
+            if isinstance(row_b, PoolRow):
+                matched_pool.add(row_b.record_id)
+            else:
+                matched_new.add(row_b.record_id)
         elif outcome == "review":
             review_pairs.append((row_a, row_b, score, features))
         else:
             rejected += 1
-    return ProbabilisticLinking(auto_merge_groups=group_auto_merging(am_pairs), review_candidates=review_pairs, rejected_count=rejected)
+        unmatched_new = [row for row in rows if row.record_id not in matched_new]
+    return ProbabilisticLinking(auto_merge_groups=group_auto_merging(am_pairs), review_candidates=review_pairs, rejected_count=rejected, matched_pool_records=matched_pool, unmatched_new=unmatched_new, all_scored=all_scored)
