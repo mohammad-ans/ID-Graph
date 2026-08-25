@@ -37,3 +37,4 @@ resolver:
 probabilistic:
  - auto_merge_threshold: 0.9
  - review_threshold: 0.8
+ - active_learning_min_labels: 15
