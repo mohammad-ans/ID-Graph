@@ -12,11 +12,13 @@ sys.path.insert(0, str(DEMO_DIR))
 import yaml
 from nebula_f import FakeNebulaClient
 from dummy_data import build_batches, build_showcase_rows
+import under_dev.active_learning as al
 from graph_model import GraphRow, belongs_to_identity,  add_probable_identity, vid as graph_vid, row_to_ngql, add_identity
 from batch_id_union import cluster_identifiers, distinct_identifiers
 from sync_audience_graph import fetch_identities, write_batch, write_identity_queries
-from probability import prolly_enabled, resolve_prolly
+from probability import prolly_enabled, resolve_prolly,  pair_features, FellegiSunterModel
 from supernode import SupernodeAnomalyScorer
+from fake_pg import Cursor, ReviewQueue
 
 RECORD_LABELS = {
     "r-alice-1": "Alice", "r-alice-2": "Alice", "r-dave-1": "Dave",  "r-dave-2": "Dave", "r-bob-1": "Bob", "r-carol-1": "Carol",
