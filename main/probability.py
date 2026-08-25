@@ -3,7 +3,7 @@ import math
 from dataclasses import dataclass, field as dc_field
 from datetime import datetime
 import numpy
-from graph_model import GraphRow, record_vid
+from graph_model import GraphRow, record_vid, update_vertex
 
 
 TIME_SLOTS = (("temporal_same_day", 1), ("temporal_same_week", 7), ("temporal_same_month", 30))
@@ -144,6 +144,7 @@ class PoolRow:
     record_id: str
     raw_signals: dict[str, str | None]
     attributes: dict[str, str | None]
+    identity_no: str | None = None
 
     @property
     def vertex_id(self):
@@ -151,13 +152,13 @@ class PoolRow:
         return record_vid(source_table, self.record_id)
 
     @classmethod
-    def from_graph_row(cls, row: GraphRow):
-        return cls(row.record_id, raw_signals=dict(row.raw_signals), attributes=dict(row.attributes))
+    def from_graph_row(cls, row: GraphRow, identity_no: str | None = None):
+        return cls(row.record_id, raw_signals=dict(row.raw_signals), attributes=dict(row.attributes), identity_no = identity_no)
     def to_dict(self):
-        return {"record_id": self.record_id, "raw_signals": self.raw_signals, "attributes": self.attributes}
+        return {"record_id": self.record_id, "raw_signals": self.raw_signals, "attributes": self.attributes, "identity_no": self.identity_no}
     @classmethod
     def from_dict(cls, d: dict):
-        return cls(record_id=d["record_id"], raw_signals=d["raw_signals"], attributes=d["attributes"])
+        return cls(record_id=d["record_id"], raw_signals=d["raw_signals"], attributes=d["attributes"], identity_no=d.get("identity_no"))
 
 def generate_cross_batch_candidates(rows: list[GraphRow], pool_rows: list[PoolRow], max_block_size: int = 200):
     new_pairs = generate_candidates(rows, max_block_size)
@@ -276,3 +277,30 @@ def resolve_prolly(rows: list[GraphRow], schema_cols: dict, model: FellegiSunter
             rejected += 1
         unmatched_new = [row for row in rows if row.record_id not in matched_new]
     return ProbabilisticLinking(auto_merge_groups=group_auto_merging(am_pairs), review_candidates=review_pairs, rejected_count=rejected, matched_pool_records=matched_pool, unmatched_new=unmatched_new, all_scored=all_scored)
+
+
+@dataclass
+class ReunionCandidate:
+    probable_identity: str
+    member_records: list[str]
+    score: float
+
+def score_guest(row: GraphRow, probable_candidates: list[PoolRow], schema_cols: dict, model: FellegiSunterModel | None = None):
+    if model is None:
+        model = FellegiSunterModel()
+    config = parse_config(schema_cols)
+    identity_recScore: dict[str, list[tuple[str, float]]] = {}
+    for candidate in probable_candidates:
+        if blocking_key(candidate) != blocking_key(row):
+            continue
+        features = pair_features(row, candidate, schema_cols)
+        score = model.score(features)
+        if classify(score, config) != "auto_merge":
+            continue
+        identity_recScore.setdefault(candidate.identity_no, []).append((candidate.record_id, score))
+        result = [ReunionCandidate(probable_identity=identity, member_records=[id for id, _ in pairs], score=sum(s for _, s in pairs) / len(pairs)) 
+                  for identity, pairs in identity_recScore.items()]
+        return sorted(result, key=lambda r: r.score, reverse=True)
+
+def statements_reconciliation(identity: str, canonical_identity: str):
+    return [update_vertex(identity, "identity_no", {"deprecated": True, "merged_into": canonical_identity})]
