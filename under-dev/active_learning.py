@@ -95,3 +95,18 @@ def maybe_fit(conn, schema_cols: dict, schema_name: str, review_table: str = "id
     classifier = logistic_regression(labeled)
     logger.info(f"Fitted classifiers in {len(labeled)} labels {len(matches)} match / {len(non_match)} non match")
     return classifier
+
+def record_review(conn, record_a, record_b, decision: str, schema_name: str, review_table: str = "identity_review_queue"):
+    if decision not in ("match", "not_match"):
+        raise ValueError(f"decision must be match or non-match, got {decision!r}")
+    with conn.cursor() as cur:
+        cur.execute(f"""
+            UPDATE {schema_name}.{review_table}
+            SET decision = %s, decided_at = now() 
+            WHERE (record_id_a = %s AND record_id_b = %s) OR (record_id_a = %s AND record_id_b = %s)
+        """, (decision, record_a, record_b, record_b, record_a))
+        updated = cur.rowcount
+    conn.commit()
+    if updated == 0:
+        logger.info(f"no row matched ({record_a}, {record_b}) in {schema_name}.{review_table}")
+    return updated
