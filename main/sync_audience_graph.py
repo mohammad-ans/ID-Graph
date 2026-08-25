@@ -159,6 +159,7 @@ def ensure_review_queue(conn: _T_conn, schema_name: str, review_table: str = "id
                 features JSONB NOT NULL,
                 status text NOT NULL DEFAULT 'pending',
                 created_at timestamp NOT NULL DEFAULT now(),
+                decision text,
                 decided_at timestamp,
                 CHECK (status IN ('pending', 'confirmed', 'rejected'))
             );
