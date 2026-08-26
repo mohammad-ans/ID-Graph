@@ -6,13 +6,15 @@ from pathlib import Path
 
 MAIN_DIR = Path(__file__).resolve().parent.parent / "main"
 DEMO_DIR = Path(__file__).resolve().parent
+DEV_DIR = Path(__file__).resolve().parent.parent / "under_dev"
 sys.path.insert(0, str(MAIN_DIR))
 sys.path.insert(0, str(DEMO_DIR))
+sys.path.insert(0, str(DEV_DIR))
 
 import yaml
 from nebula_f import FakeNebulaClient
-from dummy_data import build_batches, build_showcase_rows
-import under_dev.active_learning as al
+from dummy_data import build_batches, build_showcase_rows, make_rows, SCHEMA_COLS
+import active_learning as al
 from graph_model import GraphRow, belongs_to_identity,  add_probable_identity, vid as graph_vid, row_to_ngql, add_identity
 from batch_id_union import cluster_identifiers, distinct_identifiers
 from sync_audience_graph import fetch_identities, write_batch, write_identity_queries
@@ -192,6 +194,20 @@ def supernode_demo(max_identifiers_hint: int):
     else:
         print(f"Promo result could not have been caught by static {max_identifiers_hint} max identifiers count. Total identifiers count: {promo_result.features.identifier_count}. The adaptive detector catches it as: {promo_result.reason}")
 
+DECISIONS = [
+    ("match-1a", "match-1b", "match"),
+    ("match-2a", "match-2b", "match"),
+    ("match-3a", "match-3b", "match"),
+    ("match-4a", "match-4b", "match"),
+    ("match-5a", "match-5b", "match"),
+    ("nonmatch-1a", "nonmatch-1b", "not_match"),
+    ("nonmatch-2a", "nonmatch-2b", "not_match"),
+    ("nonmatch-3a", "nonmatch-3b", "not_match"),
+    ("nonmatch-4a", "nonmatch-4b", "not_match"),
+    ("nonmatch-5a", "nonmatch-5b", "not_match"),
+    ("borderline-a", "borderline-b", None)
+]
+
 def main():
     parser = argparse.ArgumentParser(description="Run demo of the identity graph")
     parser.add_argument("--max-identifiers", type=int, default=3)
@@ -299,6 +315,49 @@ def main():
             print("Nothing scored meaning every identity created was brand new in its batch")
         supernode_demo(max_identifiers_hint=max(args.max_identifiers, 10))
 
+    print("=" * 72)
+    print("Active learning using review queue")
+    print("=" * 72)
+    model = FellegiSunterModel()
+    conn = ReviewQueue()
+    rows = make_rows()
+    print("Score every candidate pair with Fellegi Sunter")
+    for a, b, _ in DECISIONS:
+        features = pair_features(rows[a], rows[b], schema_cols)
+        score = model.score(features)
+        conn.insert_candidate(a, b, score, features)
+        print(f" {a:<14} / {b:<14} score={score:.4f}")
+    print("Fetching the review queue ordered in ascending way on basis of abs(score - 0.5)")
+    for record_a, record_b, score, features in al.fetch_review_queue(conn, "public", limit=10):
+        print(f" abs(score - 0.5) = {abs(score - 0.5):.4f} score={score:.4f} {record_a} / {record_b}")
+    print("\nNow showing the decisions that are pre defined for the demo run")
+    for a, b, decision in DECISIONS:
+        if decision is None:
+            continue
+        al.record_review(conn, a, b, decision, "public")
+        print(f" recorded for {a} and {b}: {decision}")
+
+    classifier = al.maybe_fit(conn, SCHEMA_COLS, "public")
+    if classifier is None:
+        print("Not enough labels for match and non match")
+    else:
+        print(f"Active learning training done on {classifier.total_trained} labels. Coefficients are")
+        for name, weight in sorted(classifier.coefficients().items(), key=lambda kv: -abs(kv[1])):
+            print(f" {name:<22} {weight:+.3f}")
+
+        print("\nScoring the still undecided bordeline pair now")
+        features = pair_features(rows["borderline-a"], rows["borderline-b"], SCHEMA_COLS)
+        fellegi_score = model.score(features)
+        score, method = al.score(features, model, classifier)
+        print(f" If using the Fellegi Sunter, score is {fellegi_score:.4f} ")
+        print(f" If using the active learning, score is {score:.4f} with method={method}")
+        print(f"\nUncertainity ordered queue after decisions")
+        remaining = al.fetch_review_queue(conn, "public", limit=10)
+        for record_a, record_b, score, _ in remaining:
+            print(f" abs(score - 0.5) = {abs(score - 0.5):.4f} score = {score:.4f} {record_a} / {record_b}")
+
+        if not remaining:
+            print("Queue is empty")
 
 if __name__ == "__main__":
     main()

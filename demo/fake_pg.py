@@ -21,8 +21,8 @@ class Cursor:
                     row["decision"] = decision
                     row["decided_at"] = "now"
                     updated += 1
-                self.rowcount = updated
-                return
+            self.rowcount = updated
+            return
         if "WHERE decision IS NULL" in sql_norm and "ORDER BY" in sql_norm:
             limit = params[0]
             undecided = [row for row in self.table if row.get("decision") is None]

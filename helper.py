@@ -1,7 +1,7 @@
 import yaml
 from collections import defaultdict
 
-# with open("schema.yaml") as file:
+# with open("./main/schema.yaml") as file:
 #     data_columns = yaml.safe_load(file)
 #     temp = list(data_columns["passthrough"])
 #     temp.extend(element["column"] for element in data_columns["identifiers"])
@@ -12,10 +12,5 @@ from collections import defaultdict
 
     # if data_columns["signal_groups"]
 # print(f"{'identity':>24}{'ids':>5}{'recs':>6}{'growth':>8}{'diversity':>11}{'burst':>8}{'mean_z':>9}{'max_z':<8}a")
-
-choice = input(" match / not match / skip / quit > ").strip().lower()
-match choice:
-    case "match" | "m":
-        print("match")
-    case _:
-        print("M")
+print(f"a{'a':>5}")
+print(f"{'a':<2}b")

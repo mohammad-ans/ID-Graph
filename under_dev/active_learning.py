@@ -10,10 +10,10 @@ FEATURES = ("screen_width", "screen_length", "ip_country", "city", "language", "
 
 
 def parse_config(schema_cols: dict):
-    out = {"active_learning_min_labels": 15}
-    for item in schema_cols.get("probabilistic", []):
-        out.update(item)
-    return out
+    out = schema_cols.get("probabilistic")
+    for el in out:
+        if "active_learning_min_labels" in el.keys():
+            return el
 
 def features_arr(features):
     return numpy.array([1.0 if features.get(name) else 0.0 for name in FEATURES], dtype=float)
@@ -72,7 +72,7 @@ def fetch_labeled(conn, schema_name: str, review_table: str = "identity_review_q
         cur.execute(f"""
             SELECT features, decision 
             FROM {schema_name}.{review_table}
-            WHERE decision is NOT NULL
+            WHERE decision IS NOT NULL
         """)
         rows = cur.fetchall()
     labeled = []
@@ -80,8 +80,8 @@ def fetch_labeled(conn, schema_name: str, review_table: str = "identity_review_q
         features = features_db
         if not isinstance(features_db, dict):
             features = json.loads(features_db)
-            labeled.append((features, 1 if decision == "match" else 0))
-        return labeled
+        labeled.append((features, 1 if decision == "match" else 0))
+    return labeled
 
 def maybe_fit(conn, schema_cols: dict, schema_name: str, review_table: str = "identity_review_queue"):
     config = parse_config(schema_cols)
@@ -98,7 +98,7 @@ def maybe_fit(conn, schema_cols: dict, schema_name: str, review_table: str = "id
 
 def record_review(conn, record_a, record_b, decision: str, schema_name: str, review_table: str = "identity_review_queue"):
     if decision not in ("match", "not_match"):
-        raise ValueError(f"decision must be match or non-match, got {decision!r}")
+        raise ValueError(f"decision must be match or not_match, got {decision!r}")
     with conn.cursor() as cur:
         cur.execute(f"""
             UPDATE {schema_name}.{review_table}
