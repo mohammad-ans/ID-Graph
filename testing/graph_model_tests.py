@@ -8,9 +8,9 @@ DEMO_DIR = Path(__file__).resolve().parent.parent / "demo"
 sys.path.insert(0, str(MAIN_DIR))
 sys.path.insert(0, str(DEMO_DIR))
 
-from demo.nebula_f import FakeNebulaClient
+from nebula_f import FakeNebulaClient
 from batch_id_union import cluster_identifiers, distinct_identifiers
-from graph_model import GraphRow, normalize_token, normalize_loc, sha256_text, is_valid_maid, ngql_string, vid, record_vid, identifier_type, parse_date, row_to_ngql, belongs_to_identity
+from graph_model import GraphRow, normalize_token, normalize_loc, sha256_text, is_valid_maid, ngql_string, vid, record_vid, identifier_type, parse_date, row_to_ngql, belongs_to_identity, insert_edge, insert_vertex, update_edge, update_vertex
 
 def load_schema_cols():
     with open(MAIN_DIR / "schema.yaml") as file:
@@ -139,3 +139,58 @@ class BelongsToIdentityTests(unittest.TestCase):
         statements, invalid_declare = self.sync([build_row(f"rb{i}", email="a@gmail.com", phone=f"12345678{i}", screen_width=str(2000 * i * 50), city=f"cityy{i}") for i in range(3)], max_identifiers=3, remap_type=3)
         self.assertTrue(any(pair[1] == sha256_text("a@gmail.com") for pair in invalid_declare))
         self.assertIsInstance(statements, list)
+
+class NgqlStatementsTests(unittest.TestCase):
+    def test_insert_vertex(self):
+        statement = insert_vertex("email", "email:a", {"value": "a"})
+        self.assertEqual(statement, 'INSERT VERTEX `email`(value) VALUES "email:a":("a")')
+
+    def test_insert_multiTag_vertex(self):
+        statement = insert_vertex(["record", "fg_hash"], "r:1", {"record": {"a": "1"}, "fg_hash": {"b": "2"}})
+        self.assertIn('`record`(a)', statement)
+        self.assertIn('`fg_hash`(b)', statement)
+        self.assertIn('VALUES "r:1":("1", "2")', statement)
+
+    def test_insert_edge(self):
+        statement = insert_edge("has_email", "r:1", "email:a")
+        self.assertEqual(statement, 'INSERT EDGE `has_email`() VALUES "r:1"->"email:a":()')
+
+    def test_insert_edge_props(self):
+        statement = insert_edge("belongs_to", "email:a", "uid:1", {"start_date": "2024-01-01T00:00:00", "end_date": ""})
+        self.assertIn('start_date, end_date', statement)
+        self.assertIn('"2024-01-01T00:00:00", ""', statement)
+
+    def test_update_vertex(self):
+        statement = update_vertex("uid:1", "identity_no", {"deprecated": True})
+        self.assertEqual(statement, 'UPDATE VERTEX "uid:1" SET identity_no.deprecated = true')
+    def test_update_edge(self):
+        statement = update_edge("belongs_to", "email:a", "uid:1", {"end_date": "2024-01-01T00:00:00"})
+        self.assertEqual(statement, 'UPDATE EDGE ON belongs_to "email:a"->"uid:1" SET end_date = "2024-01-01T00:00:00"')
+
+class GraphRowFromdbTests(unittest.TestCase):
+    def setUp(self):
+        self.schema_cols = load_schema_cols()
+
+    def test_result(self):
+        row = GraphRow.from_db_row(build_row("r1", email="a@gmail.com", phone="12345678"), self.schema_cols)
+        self.assertIsNotNone(row.identifiers["email"])
+        self.assertIsNotNone(row.identifiers["phone"])
+        self.assertIsNotNone(row.signals["device_props"])
+        self.assertIsNotNone(row.signals["ip_loc"])
+        self.assertIsNone(row.identifiers["maid"])
+
+    def test_missing_signals(self):
+        raw = build_row("r1", email="a@gmail.com")
+        raw["ip_country"] = None
+        raw["city"] = None
+        raw["language"] = None
+        row = GraphRow.from_db_row(raw, self.schema_cols)
+        self.assertIsNone(row.signals["ip_loc"])
+
+    def test_vertexid(self):
+        row = GraphRow.from_db_row(build_row("r1", email="a@gmail.com"), self.schema_cols)
+        self.assertEqual(row.vertex_id, "record:orders:r1")
+
+
+if __name__ == "__main__":
+    unittest.main()
