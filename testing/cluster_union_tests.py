@@ -9,7 +9,9 @@ DEMO_DIR = Path(__file__).parent.parent / "demo"
 sys.path.insert(0, str(MAIN_DIR))
 sys.path.insert(0, str(DEMO_DIR))
 
-from cluster_union_strict import UnionFind, generate_pairs, is_identifier_check
+from cluster_union_strict import UnionFind, generate_pairs, is_identifier_check, cluster_identifiers_strict
+from nebula_f import FakeNebulaClient
+from graph_model import GraphRow, row_to_ngql, vid, add_identity
 
 def load_schema_cols():
     with open(MAIN_DIR / "schema.yaml") as file:
@@ -61,3 +63,40 @@ class IsIdentifierTests(unittest.TestCase):
         self.assertTrue(is_identifier_check(["email", "phone"], "email:abc123"))
     def test_reject_identifier(self):
         self.assertFalse(is_identifier_check(["email", "phone"], "dummy"))
+
+class ClusterIdentifiersStrictTests(unittest.TestCase):
+    def setUp(self):
+        self.schema_cols = load_schema_cols()
+        self.nebula = FakeNebulaClient()
+    def build_identity(self, raw_rows):
+        rows = [GraphRow.from_db_row(row, self.schema_cols) for row in raw_rows]
+        for row in rows:
+            self.nebula.execute_many(row_to_ngql(row))
+        identifiers = set()
+        for row in rows:
+            identifiers.update({vid(id_type, val) for id_type, val in row.identifiers.items() if val})
+        statements, identity = add_identity(identifiers)
+        self.nebula.execute_many(statements)
+        return identity
+
+    def test_return_none_liveData_not_flushed(self):
+        result = cluster_identifiers_strict("uid:r1", self.nebula, self.schema_cols)
+        self.assertIsNone(result)
+
+    def test_split_unrelated(self):
+        rows = [build_row(f"r{i}", email="a@gmail.com", phone=f"1234567{i}", screen_width=str(1000 + i * 50), city=f"City{i}") for i in range(4)]
+        identity = self.build_identity(rows)
+        result = cluster_identifiers_strict(identity, self.nebula, self.schema_cols)
+        self.assertIsNotNone(result)
+        cluster_identifier, _, _, _ = result
+        self.assertEqual(len(cluster_identifier), 4)
+
+    def test_not_split_related(self):
+        rows = [build_row("r1", email="a@gmail.com", phone="12345678", screen_width="1440"),
+            build_row("r2", email="a@gmail.com", phone="12345678", screen_width="1440")]
+        identity = self.build_identity(rows)
+        result = cluster_identifiers_strict(identity, self.nebula, self.schema_cols)
+        self.assertIsNone(result)
+
+if __name__ == "__main__":
+    unittest.main()
