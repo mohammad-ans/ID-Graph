@@ -1,6 +1,6 @@
 from __future__ import annotations
 import hashlib
-
+from main.graph_model import GraphRow
 def sha256_text(value: str):
     return hashlib.sha256(value.strip().lower().encode("utf-8")).hexdigest()
 
@@ -135,3 +135,45 @@ def build_showcase_rows():
 
 
     return rows
+
+
+SCHEMA_COLS = {
+    "identifiers": [
+        {"name": "email", "column": "hashed_email", "pre_hashed": True, "include_in_belongs_to": True},
+        {"name": "phone", "column": "hashed_phone", "pre_hashed": True, "include_in_belongs_to": True},
+        {"name": "maid", "column": "maid", "pre_hashed": False, "include_in_belongs_to": False}
+     ],
+     "signal_groups": [
+         {"name": "device_props", "columns": ["screen_width", "screen_length"]},
+         {"name": "ip_loc", "columns": ["ip_country", "city", "language"]}
+     ],
+     "passthrough": ["transaction_date", "merchant_name", "merchant_url", "source_table"],
+    "record_id": ["record_id"],
+    "probabilistic": [{"active_learning_min_labels": 5}]}
+
+def make_rows():
+    raw = {
+        "match-1a": row("match-1a", "orders", "2025-01-01T09:00:00", "Northwind", screen_width="1440", screen_length="900", ip_country="us", city="Austin", language="en-US"),
+        "match-1b": row("match-1b", "orders", "2025-01-02T09:00:00", "Northwind", screen_width="1440", screen_length="900", ip_country="us", city="Austin", language="en-US"),
+        "match-2a": row("match-2a", "orders", "2025-02-01T09:00:00", "Bluebird", screen_width="1920", screen_length="1080", ip_country="us", city="Denver", language="en-US"),
+        "match-2b": row("match-2b", "orders", "2025-02-03T09:00:00", "Bluebird", screen_width="1920", screen_length="1080", ip_country="us", city="Denver", language="en-US"),
+        "match-3a": row("match-3a", "orders", "2025-03-01T09:00:00", "Cedar", screen_width="360", screen_length="780", ip_country="ca", city="Toronto", language="en-CA"),
+        "match-3b": row("match-3b", "orders", "2025-03-01T09:00:00", "Cedar", screen_width="360", screen_length="780", ip_country="ca", city="Toronto", language="en-CA"),
+        "match-4a": row("match-4a", "orders", "2025-07-01T09:00:00", "NorthWind", screen_width="1336", screen_length="768", ip_country="us", city="Miami", language="en-US"),
+        "match-4b": row("match-4b", "orders", "2025-07-02T09:00:00", "NorthWind", screen_width="1336", screen_length="768", ip_country="us", city="Miami", language="en-US"),
+        "match-5a": row("match-5a", "orders", "2025-08-01T09:00:00", "Bluebird", screen_width="414", screen_length="896", ip_country="gb", city="London", language="en-GB"),
+        "match-5b": row("match-5b", "orders", "2025-080-04T09:00:00", "Bluebird", screen_width="414", screen_length="896", ip_country="gb", city="London", language="en-GB"),
+        "nonmatch-1a": row("nonmatch-1a", "orders", "2025-04-01T09:00:00", "Northwind", screen_width="1440", screen_length="900", ip_country="us", city="Austin", language="en-US"),
+        "nonmatch-1b": row("nonmatch-1b", "orders", "2025-09-01T09:00:00", "BulkBuy", screen_width="393", screen_length="852", ip_country="mx", city="Monterrey", language="es-MX"),
+        "nonmatch-2a": row("nonmatch-2a", "orders", "2025-05-01T09:00:00", "Bluebird", screen_width="1920", screen_length=1080, ip_country="us", city="Denver", language="en-US"),
+        "nonmatch-2b": row("nonmatch-2b", "orders", "2025-10-01T09:00:00", "Cedar", screen_width="1280", screen_length="800", ip_country="gb", city="London", language="en-GB"),
+        "nonmatch-3a": row("nonmatch-3a", "orders", "2025-01-15T09:00:00", "Cedar", screen_width="1600", screen_length="900", ip_country="us", city="Seatle", language="en-US"),
+        "nonmatch-3b": row("nonmatch-3b", "orders", "2025-11-01T09:00:00", "Northwind", screen_width="1024", screen_length="768", ip_country="ca", city="Vancouver", language="en-CA"),
+        "nonmatch-4a": row("nonmatch-4a", "orders", "2025-02-15T09:00:00", "Bluebird", screen_width="1536", screen_length="864", ip_country="us", city="Chicago", language="en-US"),
+        "nonmatch-4b": row("nonmatch-4b", "orders", "2025-12-01T09:00:00", "Bulkbuy", screen_width="390", screen_length="844", ip_country="mx", city="Monterrey", language="es-MX"),
+        "nonmatch-5a": row("nonmatch-5a", "orders", "2025-03-15T09:00:00", "Northwind", screen_width="1920", screen_length="1200", ip_country="us", city="Boston", language="en-US"),
+        "nonmatch-5b": row("nonmatch-5b", "orders", "2025-12-15T09:00:00", "Cedar", screen_width="360", screen_length="800", ip_country="ca", city="Toronto", language="en-CA"),
+        "borderline-a": row("borderline-a", "orders", "2025-06-01T09:00:00", "Cedar", screen_width="1440", screen_length="900", ip_country="us", city="Austin", language="en-US"),
+        "borderline-b": row("borderline-b", "orders", "2025-06-15T09:00:00", "Cedar", screen_width="1920", screen_length="1080", ip_country="us", city="Austin", language="en-US")
+    }
+    return {rid: GraphRow.from_db_row(r, SCHEMA_COLS) for rid, r in raw.items()}

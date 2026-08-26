@@ -20,6 +20,7 @@ from probability import prolly_enabled, resolve_prolly,  pair_features, FellegiS
 from supernode import SupernodeAnomalyScorer
 from fake_pg import Cursor, ReviewQueue
 
+
 RECORD_LABELS = {
     "r-alice-1": "Alice", "r-alice-2": "Alice", "r-dave-1": "Dave",  "r-dave-2": "Dave", "r-bob-1": "Bob", "r-carol-1": "Carol",
     "r-promo-1": "Person1 (promo)", "r-promo-2": "Person2 (promo)", "r-promo-3": "Person3 (promo)", "r-promo-4": "Person4 (promo)", "r-promo-5": "Person5 (promo)", "r-promo-6": "Person6 (promo)", "r-promo-7": "Person7 (promo)", 
@@ -297,6 +298,7 @@ def main():
         else:
             print("Nothing scored meaning every identity created was brand new in its batch")
         supernode_demo(max_identifiers_hint=max(args.max_identifiers, 10))
+
 
 if __name__ == "__main__":
     main()
