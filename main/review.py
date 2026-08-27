@@ -1,6 +1,6 @@
 from pathlib import Path
 import yaml, os, sys, argparse
-import active_learning
+import main.active_learning as active_learning
 from main.sync_audience_graph import connect_postgres
 from main.config import PostgresConfig
 

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field as dc_field
 from datetime import datetime
 import numpy
 from graph_model import GraphRow, record_vid, update_vertex
-
+from active_learning import LogisticClassifier, score as al_score
 
 TIME_SLOTS = (("temporal_same_day", 1), ("temporal_same_week", 7), ("temporal_same_month", 30))
 
@@ -244,7 +244,7 @@ class ProbabilisticLinking:
     unmatched_new: list[GraphRow] = dc_field(default_factory=list)
     all_scored: list[tuple[str, str, float, dict, str]] = dc_field(default_factory=list)
 
-def resolve_prolly(rows: list[GraphRow], schema_cols: dict, model: FellegiSunterModel | None = None, pool_rows: list[PoolRow] | None = None):
+def resolve_prolly(rows: list[GraphRow], schema_cols: dict, model = None, classifier: LogisticClassifier | None = None, pool_rows: list[PoolRow] | None = None):
     if model is None:
         model = FellegiSunterModel()
     config = parse_config(schema_cols)
@@ -261,7 +261,7 @@ def resolve_prolly(rows: list[GraphRow], schema_cols: dict, model: FellegiSunter
     all_scored = []
     for row_a, row_b in candidates:
         features = pair_features(row_a, row_b, schema_cols)
-        score = model.score(features)
+        score, method = al_score(features, model, classifier)
         outcome = classify(score, config)
         all_scored.append((row_a.record_id, row_b.record_id, score, features, outcome))
         if outcome == "auto_merge":

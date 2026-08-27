@@ -14,6 +14,7 @@ from graph_model import GraphRow, row_to_ngql, belongs_to_identity, add_probable
 from nebula_client import NebulaClient
 from batch_id_union import cluster_identifiers, distinct_identifiers
 from probability import resolve_prolly, prolly_enabled, PoolRow, blocking_key, FellegiSunterModel, should_refit
+from active_learning import maybe_fit
 import re
 import json
 
@@ -51,6 +52,30 @@ def connect_postgres(config: PostgresConfig):
         keepalives_interval=10,
         keepalives_count=5,
     )
+
+def ensure_probable_match_table(conn: _T_conn, schema_name: str, table_name: str = "probable_match"):
+    logger.info(f"Ensuring {schema_name}.{table_name} exists")
+    with conn.cursor() as cur:
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {schema_name}.{table_name} (
+                record_id text PRIMARY KEY,
+                identity_no text NOT NULL,
+                row_data JSONB NOT NULL.
+                blocking_key_country text,
+                blocking_key_week text,
+                linked_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        cur.execute(f"""
+            CREATE INDEX IF NOT EXISTS {table_name}_blocking_idx ON {schema_name}.{table_name} (blocking_key_country, blocking_key_week)
+        """)
+        cur.execute(f"""
+            CREATE INDEX IF NOT EXISTS {table_name}_identity_idx ON {schema_name}.{table_name} (identity_no)
+        """)
+        conn.commit()
+        logger.info("Probable match table done")
+
+def insert_into_probable_match(conn: _T_conn, rows: list)
 
 def ensure_main_table(conn: _T_conn, schema_name: str, table_name: str = "record_identities"):
     logger.info(f"Ensuring {schema_name}.{table_name} exists")
@@ -510,7 +535,7 @@ def fetch_identities_batch(chunk : list[str], nebula : NebulaClient):
         identity_vid = row.values[1].get_sVal().decode("utf-8")
         mapping[identifier_vid] = identity_vid
     return mapping
-    
+
 
 def sync_table(
     read_conn,
@@ -574,9 +599,10 @@ def sync_table(
         if sync_config.remap_type == 3 and invalid_identifiers_declare:
             insert_invalid_identifiers(audit_conn, invalid_identifiers_declare, sync_config.schema_name)
         if unresolvable and prolly_enabled(schema_cols):
+            classifier = maybe_fit(audit_conn, schema_cols, sync_config.schema_name)
             blocking_keys = {blocking_key(row) for row in unresolvable}
             pool_candidates = fetch_pool_candidates(audit_conn, blocking_keys, sync_config.schema_name)
-            prob_result = resolve_prolly(unresolvable, schema_cols, prob_model, pool_rows=pool_candidates)
+            prob_result = resolve_prolly(unresolvable, schema_cols, prob_model, classifier, pool_rows=pool_candidates)
             for group_rows, score in prob_result.auto_merge_groups:
                 group_statements, _ = add_probable_identity(group_rows, score)
                 statements.extend(group_statements)
