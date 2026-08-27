@@ -66,3 +66,49 @@ class MutationTests(unittest.TestCase):
         self.nebula.execute('DELETE EDGE has_email "r1"->"email:a"')
         self.assertNotIn("email:a", self.nebula.graph.out_edges.get("r1", {}).get("has_email", {}))
         self.assertNotIn("r1", self.nebula.graph.in_edges.get("email:a", {}).get("has_email", {}))
+
+class TraversalTests(unittest.TestCase):
+    def setUp(self):
+        self.nebula = FakeNebulaClient()
+        self.nebula.execute('INSERT EDGE `has_email`() VALUES "r1"->"email:a":()')
+        self.nebula.execute('INSERT EDGE `belongs_to`(start_date, end_date) VALUES "email:a"->"id1":()')
+        self.nebula.execute('INSERT VERTEX `record`(transaction_date) VALUES "r1":("2026-01-01T00:00:00")')
+
+    def test_forward_traversals(self):
+        result = self.nebula.execute('GO FROM "r1" OVER has_email YIELD dst(edge) AS identifier_vid')
+        self.assertEqual(result.row_size(), 1)
+        self.assertEqual(result.row_values(0)[0].cast(), "email:a")
+
+    def test_recursively(self):
+        result = self.nebula.execute('GO FROM "id1" OVER belongs_to REVERSELY YIELD src(edge) AS stored_src, dst(edge) AS stored_dst')
+        self.assertEqual(result.row_size(), 1)
+        self.assertEqual(result.row_values(0)[0].cast(), "email:a")
+        self.assertEqual(result.row_values(0)[1].cast(), "id1")
+
+    def test_where_endDate(self):
+        self.nebula.execute('INSERT EDGE `belongs_to`(start_date, end_date) VALUES "email:b"->"id1":("2023-01-01T00:00:00", "2023-06-01T00:00:00")')
+        result = self.nebula.execute('GO FROM "id1" OVER belongs_to REVERSELY WHERE properties(edge).end_date == "" YIELD src(edge) AS identifier_vid')
+        vids = [result.row_values(i)[0].cast() for i in range(result.row_size())]
+        self.assertEqual(vids, ["email:a"])
+
+    def test_landing_vertex_dollars(self):
+        result = self.nebula.execute('GO FROM "id1" OVER belongs_to REVERSELY YIELD src(edge) AS identifier_vid, properties($$).value AS landed_prop')
+        self.assertIsNone(result.row_values(0)[1].cast())
+
+    def test_piped_query(self):
+        result = self.nebula.execute('GO FROM "id1" OVER belongs_to REVERSELY YIELD src(edge) AS identifier_vid | GO FROM $-.identifier_vid OVER has_email REVERSELY YIELD src(edge) AS record_vid, properties($$).transaction_date AS t_date')
+        self.assertEqual(result.row_size(), 1)
+        self.assertEqual(result.row_values(0)[0].cast(), "r1")
+        self.assertEqual(result.row_values(0)[1].cast(), "2026-01-01T00:00:00")
+
+    def test_multiple_form_vids(self):
+        self.nebula.execute('INSERT EDGE `has_email`() VALUES "r2"->"email:a":()')
+        result = self.nebula.execute('GO FROM "r1", "r2" OVER has_email YIELD dst(edge) AS identifier_vid')
+        self.assertEqual(result.row_size(), 2)
+
+    def test_unrecognized_statement(self):
+        with self.assertRaises(NotImplementedError):
+            self.nebula.execute("NOTHING")
+
+if __name__ == "__main__":
+    unittest.main()
