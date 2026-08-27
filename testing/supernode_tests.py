@@ -156,3 +156,6 @@ class SupernodeAnomalyScorerTests(unittest.TestCase):
             result = self.scorer.score(identity, self.nebula, self.schema_cols)
             self.assertFalse(result.population_ready)
             self.assertFalse(result.is_anomalous)
+
+if __name__ == "__main__":
+    unittest.main()

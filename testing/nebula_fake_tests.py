@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 import sys
 
-DEMO_DIR = Path(__file__).parent.parent / "demo"
+DEMO_DIR = Path(__file__).resolve().parent.parent / "demo"
 sys.path.insert(0, str(DEMO_DIR))
 
 from nebula_f import FakeNebulaClient

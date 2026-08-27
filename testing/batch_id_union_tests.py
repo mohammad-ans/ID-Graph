@@ -3,7 +3,7 @@ import sys
 import unittest
 from pathlib import Path
 
-MAIN_DIR = Path(__file__).parent.parent / "main"
+MAIN_DIR = Path(__file__).resolve().parent.parent / "main"
 sys.path.insert(0, str(MAIN_DIR))
 
 from batch_id_union import UnionFind, cluster_identifiers, distinct_identifiers, InvalidIdentifiers, parse_date, valid_identifiers
