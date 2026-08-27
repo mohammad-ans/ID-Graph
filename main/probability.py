@@ -275,7 +275,7 @@ def resolve_prolly(rows: list[GraphRow], schema_cols: dict, model = None, classi
             review_pairs.append((row_a, row_b, score, features))
         else:
             rejected += 1
-        unmatched_new = [row for row in rows if row.record_id not in matched_new]
+    unmatched_new = [row for row in rows if row.record_id not in matched_new]
     return ProbabilisticLinking(auto_merge_groups=group_auto_merging(am_pairs), review_candidates=review_pairs, rejected_count=rejected, matched_pool_records=matched_pool, unmatched_new=unmatched_new, all_scored=all_scored)
 
 
@@ -298,9 +298,9 @@ def score_guest(row: GraphRow, probable_candidates: list[PoolRow], schema_cols: 
         if classify(score, config) != "auto_merge":
             continue
         identity_recScore.setdefault(candidate.identity_no, []).append((candidate.record_id, score))
-        result = [ReunionCandidate(probable_identity=identity, member_records=[id for id, _ in pairs], score=sum(s for _, s in pairs) / len(pairs)) 
-                  for identity, pairs in identity_recScore.items()]
-        return sorted(result, key=lambda r: r.score, reverse=True)
+    result = [ReunionCandidate(probable_identity=identity, member_records=[id for id, _ in pairs], score=sum(s for _, s in pairs) / len(pairs)) 
+                for identity, pairs in identity_recScore.items()]
+    return sorted(result, key=lambda r: r.score, reverse=True)
 
 def statements_reconciliation(identity: str, canonical_identity: str):
     return [update_vertex(identity, "identity_no", {"deprecated": True, "merged_into": canonical_identity})]

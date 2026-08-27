@@ -496,5 +496,5 @@ def get_identities(rows: list[GraphRow], nebula: NebulaClient):
                 continue
             probable = get_curr_pIdentity(row.vertex_id, nebula)
             if probable:
-                resolved[row.record_id] = "probabilistic"
+                resolved[row.record_id] = (probable, "probabilistic")
     return resolved

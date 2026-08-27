@@ -60,7 +60,7 @@ def ensure_probable_match_table(conn: _T_conn, schema_name: str, table_name: str
             CREATE TABLE IF NOT EXISTS {schema_name}.{table_name} (
                 record_id text PRIMARY KEY,
                 identity_no text NOT NULL,
-                row_data JSONB NOT NULL.
+                row_data JSONB NOT NULL,
                 blocking_key_country text,
                 blocking_key_week text,
                 linked_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -84,16 +84,16 @@ def insert_into_probable_match(conn: _T_conn, rows: list, identity_no: str, sche
             pool_row = row if isinstance(row, PoolRow) else PoolRow.from_graph_row(row)
             country, week = blocking_key(pool_row)
             args.append((pool_row.record_id, identity_no, country, week, json.dumps(pool_row.to_dict())))
-            cur.executemany(f"""
-                INSERT INTO {schema_name}.{table_name}
-                (record_id, identity_no, blocking_key_country, blocking_key_week, row_data)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (record_id) DO UPDATE SET
-                identity_no = EXCLUDED.identity_no, row_data=EXCLUDED.row_data
-            """, args)
+        cur.executemany(f"""
+            INSERT INTO {schema_name}.{table_name}
+            (record_id, identity_no, blocking_key_country, blocking_key_week, row_data)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (record_id) DO UPDATE SET
+            identity_no = EXCLUDED.identity_no, row_data=EXCLUDED.row_data
+        """, args)
     conn.commit()
 
-def fetch_probable_match_candidates(conn: _T_conn, blocking_keys: set[tuple], schema_name: str, table_name: str = "probable_match_index"):
+def fetch_probable_match_candidates(conn: _T_conn, blocking_keys: set[tuple], schema_name: str, table_name: str = "probable_match"):
     if not blocking_keys:
         return []
     rows = []
@@ -112,9 +112,9 @@ def fetch_probable_match_candidates(conn: _T_conn, blocking_keys: set[tuple], sc
             exact.append(pool_row)
     return exact 
 
-def remove_identity_probable_match(conn: _T_conn, identity: str, schema_name: str, table_name: str = "probable_match_index"):
+def remove_identity_probable_match(conn: _T_conn, identity: str, schema_name: str, table_name: str = "probable_match"):
     with conn.cursor() as cur:
-        cur.execute(f"DELETE FROM {schema_name}.{table_name} WHERRE identity_no = %s", (identity,))
+        cur.execute(f"DELETE FROM {schema_name}.{table_name} WHERE identity_no = %s", (identity,))
     conn.commit()
 
 def ensure_main_table(conn: _T_conn, schema_name: str, table_name: str = "record_identities"):
@@ -131,10 +131,10 @@ def ensure_main_table(conn: _T_conn, schema_name: str, table_name: str = "record
     conn.commit()
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schemas = %s AND table_name = %s)", (schema_name, table_name)
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = %s AND table_name = %s)", (schema_name, table_name)
         )
         exists = cur.fetchone()
-        if not exists:
+        if not exists[0]:
             raise RuntimeError("main table of identities not found, check postgres")
     logger.info(f"{schema_name}.{table_name} done")
 
@@ -248,7 +248,7 @@ def ensure_candidate_pool(conn: _T_conn, schema_name: str, pool_table: str = "un
     with conn.cursor() as cur:
         cur.execute(f"""
             CREATE TABLE IF NOT EXISTS {schema_name}.{pool_table} (
-                record_id text PRIMARY_KEY,
+                record_id text PRIMARY KEY,
                 blocking_key_country text,
                 blocking_key_week text,
                 row_data JSONB NOT NULL,
@@ -273,8 +273,8 @@ def insert_into_pool(conn: _T_conn, rows: list, schema_name: str, pool_table: st
             country, week = blocking_key(pool_row)
             args.append((pool_row.record_id, country, week, json.dumps(pool_row.to_dict())))
         cur.executemany(f"""
-            INSERT INTO {schema_name}.{pool_row}
-            (record_id, blocking_key_country. blocking_key_week, row_data, last_seen_at)
+            INSERT INTO {schema_name}.{pool_table}
+            (record_id, blocking_key_country, blocking_key_week, row_data, last_seen_at)
             VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
             ON CONFLICT (record_id) DO UPDATE SET
             row_data = EXCLUDED.row_data, last_seen_at = CURRENT_TIMESTAMP
@@ -354,7 +354,7 @@ def ensure_candidate_history(conn: _T_conn, schema_name: str, history_table: str
                 score DOUBLE PRECISION NOT NULL,
                 outcome text NOT NULL,
                 scored_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                CHECK (outcome IN ('auto_merge'm 'review', 'reject'))
+                CHECK (outcome IN ('auto_merge', 'review', 'reject'))
             );
         """)
     conn.commit()
@@ -375,7 +375,7 @@ def insert_candidate_history(conn: _T_conn, scored: list[tuple], schema_name: st
 
 def fetch_candidate_features(conn: _T_conn, schema_name: str, history_table: str = "fellegi_sunter_candidate_history", limit: int = 5000):
     with conn.cursor() as cur:
-        cur.execute(f"SELECT features FROM {schema_name}.{history_table} ORDER_BY scored_at DESC LIMIT %S", (limit, ))
+        cur.execute(f"SELECT features FROM {schema_name}.{history_table} ORDER_BY scored_at DESC LIMIT %s", (limit, ))
     return [row[0] for row in cur.fetchall()]
 
 def count_candidates_history(conn: _T_conn, schema_name: str, history_table: str = "fellegi_sunter_candidate_history"):
@@ -789,6 +789,8 @@ def run_sync(
             count = count_candidates_history(audit_conn, sync_config.schema_name)
             if should_refit(count):
                 feature_rows = fetch_candidate_features(audit_conn, sync_config.schema_name)
+                if prob_model is None:
+                    prob_model = FellegiSunterModel()
                 prob_model.fit_em(feature_rows)
                 save_model(audit_conn, prob_model, count, sync_config.schema_name)
             
