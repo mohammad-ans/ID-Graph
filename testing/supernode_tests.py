@@ -157,5 +157,39 @@ class SupernodeAnomalyScorerTests(unittest.TestCase):
             self.assertFalse(result.population_ready)
             self.assertFalse(result.is_anomalous)
 
+    def add_data(self):
+        rows = [
+            [build_row("r-1", email="r1@gmail.com", phone="12345678")],
+            [build_row("r-2", email="r2@gmail.com", transaction_date="2026-01-01T00:00:00"),
+             build_row("r-3", email="r2@gmail.com", transaction_date="2026-03-01T00:00:00", screen_width="390")],
+             [build_row("r-4", phone="123456789")],
+            [build_row("r-5", email="r5@gmail.com", phone="87654321", transaction_date="2026-01-01T00:00:00"),
+             build_row("r-6", email="r5@gmail.com", phone="87654321", transaction_date="2026-01-01T00:40:00")],
+            [build_row("r-7", email="r7@gmail.com")],
+            [build_row("r-8", email="r8@gmail.com", phone="123456789", transaction_date="2026-01-01T00:00:00"),
+             build_row("r-9", email="r8@gmail.com", phone="123456789", transaction_date="2026-04-01T00:00:00"),
+             build_row("r-10", email="r8@gmail.com", phone="123456789", transaction_date="2026-08-01T00:00:00", screen_width="360")
+             ]]
+        for batch in rows:
+            identity = build_identity(self.nebula, self.schema_cols, batch)
+            self.scorer.score(identity, self.nebula, self.schema_cols)
+
+    def test_supernode_against_clusters(self):
+        self.add_data()
+        rows = [build_row(f"anomaly{i}", email="abc@gmail.com", phone=f"12345678{i}", transaction_date=f"2026-01-01T00:0{i}:00", screen_width=f"{1200 + i * 50}", city=f"Town{i}") for i in range(1, 7)]
+        identity = build_identity(self.nebula, self.schema_cols, rows)
+        result = self.scorer.score(identity, self.nebula, self.schema_cols)
+        self.assertTrue(result.population_ready)
+        self.assertTrue(result.is_anomalous)
+        self.assertLess(result.features.identifier_count, 10)
+
+    def test_ordinary_identity_check(self):
+        self.add_data()
+        rows = [build_row("r2", email="ab@gmail.com", phone="1234567891")]
+        identity = build_identity(self.nebula, self.schema_cols, rows)
+        result = self.scorer.score(identity, self.nebula, self.schema_cols)
+        self.assertFalse(result.is_anomalous)
+
+
 if __name__ == "__main__":
     unittest.main()
