@@ -1,7 +1,7 @@
 from __future__ import annotations
 import unittest
-import yaml, hashlib, statistics
-import sys
+import yaml, hashlib, statistics, datetime
+import sys, importlib
 from pathlib import Path
 
 
@@ -11,7 +11,8 @@ sys.path.insert(0, str(MAIN_DIR))
 sys.path.insert(0, str(DEMO_DIR))
 
 from graph_model import GraphRow, row_to_ngql, vid, add_identity
-from supernode import OnlineStats, shanon_entropy
+from supernode import OnlineStats, shanon_entropy, temporal_burst_score, fetch_cluster_snapshot, compute_features, SupernodeAnomalyScorer, MIN_POPULATION
+from nebula_f import FakeNebulaClient
 
 def load_schema():
     with open(MAIN_DIR / "schema.yaml") as file:
@@ -22,15 +23,16 @@ def build_row(record_id, email=None, phone=None, transaction_date="2024-01-01T00
         return hashlib.sha256(v.strip().lower().encode("utf-8")).hexdigest() if v else None
     
     return {
-        "record_id": record_id, "source_table": "orders", "transaction_date": merchant_name, "merchant_url": "https://abc.com", "hashed_email": sha(email),
+        "record_id": record_id, "source_table": "orders", "transaction_date": transaction_date, "merchant_name": merchant_name, "merchant_url": "https://abc.com", "hashed_email": sha(email),
         "hashed_phone": sha(phone), "maid": None, "screen_width": screen_width, "screen_length": screen_length, "ip_country": ip_country, "city": city, "language": language
     }
 
-def buid_identity(nebula, schema_cols, raw_rows):
+def build_identity(nebula, schema_cols, raw_rows):
     rows = [GraphRow.from_db_row(r, schema_cols) for r in raw_rows]
     for row in rows:
         nebula.execute_many(row_to_ngql(row))
-    identifiers = {vid(id_type, val) for row in rows for id_type, val in row if val}
+    identifiers = {vid(id_type, val) for row in rows for id_type, val in row.identifiers.items() if val}
+    
     statements, identity = add_identity(identifiers)
     nebula.execute_many(statements)
     return identity
@@ -83,3 +85,74 @@ class EntropyTests(unittest.TestCase):
     def test_none_values(self):
         self.assertEqual(shanon_entropy([None, None]), 0.0)
         self.assertEqual(shanon_entropy(["a", "b", None]), shanon_entropy(["a", "b"]))
+
+class TemporalBurstTests(unittest.TestCase):
+    def test_empty_single(self):
+        self.assertEqual(temporal_burst_score([]), 0.0)
+        self.assertEqual(temporal_burst_score([datetime.datetime(2024, 1, 1)]), 0.0)
+
+    def test_wide_spaced(self):
+        base = datetime.datetime(2025, 1, 1, 8, 0, 0)
+        dates = [base, base + datetime.timedelta(days=30), base + datetime.timedelta(days=90)]
+        self.assertEqual(temporal_burst_score(dates), 0.0)
+
+    def test_tight_spaced(self):
+        base = datetime.datetime(2025, 1, 1, 8, 0, 0)
+        dates = [base, base + datetime.timedelta(minutes=5), base + datetime.timedelta(minutes=10)]
+        self.assertEqual(temporal_burst_score(dates), 1.0)
+
+    def test_mixed(self):
+        base = datetime.datetime(2025, 1, 1, 8, 0, 0)
+        dates = [base, base + datetime.timedelta(minutes=5), base + datetime.timedelta(days=60)]
+        self.assertAlmostEqual(temporal_burst_score(dates), 2 / 3)
+
+class FetchAndComputeTests(unittest.TestCase):
+    def setUp(self):
+        self.schema_cols = load_schema()
+        self.nebula = FakeNebulaClient()
+
+    def test_unflushed_identity(self):
+        snapshot = fetch_cluster_snapshot("id1", self.nebula, self.schema_cols)
+        self.assertEqual(snapshot, {})
+        features = compute_features("id1", snapshot)
+        self.assertEqual(features.record_count, 0)
+        self.assertEqual(features.identifier_count, 0)
+
+    def test_single_record(self):
+        identity = build_identity(self.nebula, self.schema_cols, [build_row("r1", email="a@gmail.com", phone="12345678")])
+        snapshot = fetch_cluster_snapshot(identity, self.nebula, self.schema_cols)
+        features = compute_features(identity, snapshot)
+        self.assertEqual(features.record_count, 1)
+        self.assertEqual(features.identifier_count, 2)
+        self.assertEqual(features.signal_diversity, 0.0)
+        self.assertEqual(features.temporal_burst, 0.0)
+
+    def test_supernode_burst_diversity(self):
+        rows = [build_row(f"r-{i}", email="b@gmail.com", phone=f"12345678{i}", transaction_date=f"2025-06-01T00:0{i}:00", screen_width=(1000 + i * 50), city=f"City{i}") for i in range(1, 6)]
+        identity = build_identity(self.nebula, self.schema_cols, rows)
+        snapshot = fetch_cluster_snapshot(identity, self.nebula, self.schema_cols)
+        features = compute_features(identity, snapshot)
+        self.assertEqual(features.record_count, 5)
+        self.assertEqual(features.identifier_count, 6)
+        self.assertEqual(features.signal_diversity, 1.0)
+        self.assertEqual(features.temporal_burst, 1.0)
+
+class SupernodeAnomalyScorerTests(unittest.TestCase):
+    def setUp(self):
+        self.schema_cols = load_schema()
+        self.nebula = FakeNebulaClient()
+        self.scorer = SupernodeAnomalyScorer()
+
+    def test_unflushed_identity(self):
+        result = self.scorer.score("id1", self.nebula, self.schema_cols)
+        self.assertFalse(result.is_anomalous)
+        self.assertIn("zero transactions inserted in graph db", result.reason)
+        self.assertEqual(self.scorer.stats["identifier_count"].n, 0)
+
+    def test_cold_start(self):
+        for i in range(MIN_POPULATION - 1):
+            rows = [build_row(f"r{i}{j}", email=f"a{i}@gmail.com", phone=f"12345{i}", transaction_date=f"2025-01-00T00:{j:02d}:00") for j in range(i + 1)]
+            identity = build_identity(self.nebula, self.schema_cols, rows)        
+            result = self.scorer.score(identity, self.nebula, self.schema_cols)
+            self.assertFalse(result.population_ready)
+            self.assertFalse(result.is_anomalous)
