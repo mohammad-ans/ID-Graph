@@ -18,7 +18,7 @@ def load_schema():
     with open(MAIN_DIR / "schema.yaml") as file:
         return yaml.safe_load(file)
 
-def build_row(record_id, email=None, phone=None, transaction_date="2024-01-01T00:00:00", merchant_name="abc", screen_width="1000", screen_length="800", ip_country="us", city="New York", language="en-US"):
+def build_row(record_id, email=None, phone=None, transaction_date="2026-01-01T00:00:00", merchant_name="abc", screen_width="1000", screen_length="800", ip_country="us", city="New York", language="en-US"):
     def sha(v):
         return hashlib.sha256(v.strip().lower().encode("utf-8")).hexdigest() if v else None
     
@@ -128,7 +128,7 @@ class FetchAndComputeTests(unittest.TestCase):
         self.assertEqual(features.temporal_burst, 0.0)
 
     def test_supernode_burst_diversity(self):
-        rows = [build_row(f"r-{i}", email="b@gmail.com", phone=f"12345678{i}", transaction_date=f"2025-06-01T00:0{i}:00", screen_width=(1000 + i * 50), city=f"City{i}") for i in range(1, 6)]
+        rows = [build_row(f"r-{i}", email="b@gmail.com", phone=f"12345678{i}", transaction_date=f"2026-06-01T00:0{i}:00", screen_width=(1000 + i * 50), city=f"City{i}") for i in range(1, 6)]
         identity = build_identity(self.nebula, self.schema_cols, rows)
         snapshot = fetch_cluster_snapshot(identity, self.nebula, self.schema_cols)
         features = compute_features(identity, snapshot)
@@ -151,7 +151,7 @@ class SupernodeAnomalyScorerTests(unittest.TestCase):
 
     def test_cold_start(self):
         for i in range(MIN_POPULATION - 1):
-            rows = [build_row(f"r{i}{j}", email=f"a{i}@gmail.com", phone=f"12345{i}", transaction_date=f"2025-01-00T00:{j:02d}:00") for j in range(i + 1)]
+            rows = [build_row(f"r{i}{j}", email=f"a{i}@gmail.com", phone=f"12345{i}", transaction_date=f"2026-01-00T00:{j:02d}:00") for j in range(i + 1)]
             identity = build_identity(self.nebula, self.schema_cols, rows)        
             result = self.scorer.score(identity, self.nebula, self.schema_cols)
             self.assertFalse(result.population_ready)

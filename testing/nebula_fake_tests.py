@@ -86,7 +86,7 @@ class TraversalTests(unittest.TestCase):
         self.assertEqual(result.row_values(0)[1].cast(), "id1")
 
     def test_where_endDate(self):
-        self.nebula.execute('INSERT EDGE `belongs_to`(start_date, end_date) VALUES "email:b"->"id1":("2023-01-01T00:00:00", "2023-06-01T00:00:00")')
+        self.nebula.execute('INSERT EDGE `belongs_to`(start_date, end_date) VALUES "email:b"->"id1":("2026-01-01T00:00:00", "2026-06-01T00:00:00")')
         result = self.nebula.execute('GO FROM "id1" OVER belongs_to REVERSELY WHERE properties(edge).end_date == "" YIELD src(edge) AS identifier_vid')
         vids = [result.row_values(i)[0].cast() for i in range(result.row_size())]
         self.assertEqual(vids, ["email:a"])

@@ -12,5 +12,4 @@ from collections import defaultdict
 
     # if data_columns["signal_groups"]
 # print(f"{'identity':>24}{'ids':>5}{'recs':>6}{'growth':>8}{'diversity':>11}{'burst':>8}{'mean_z':>9}{'max_z':<8}a")
-print(f"a{'a':>5}")
-print(f"{'a':<2}b")
+print(["a"] * 10)
