@@ -10,10 +10,10 @@ import psycopg2
 import psycopg2.extras
 from psycopg2.extensions import connection as _T_conn
 from config import NebulaConfig, PostgresConfig, SyncConfig
-from graph_model import GraphRow, row_to_ngql, belongs_to_identity, add_probable_identity, get_identities
+from graph_model import GraphRow, row_to_ngql, belongs_to_identity, add_probable_identity, get_identities, vid
 from nebula_client import NebulaClient
 from batch_id_union import cluster_identifiers, distinct_identifiers
-from probability import resolve_prolly, prolly_enabled, PoolRow, blocking_key, FellegiSunterModel, should_refit
+from probability import resolve_prolly, prolly_enabled, PoolRow, blocking_key, FellegiSunterModel, should_refit, score_guest, statements_reconciliation
 from active_learning import maybe_fit
 import re
 import json
@@ -576,6 +576,50 @@ def fetch_identities_batch(chunk : list[str], nebula : NebulaClient):
         mapping[identifier_vid] = identity_vid
     return mapping
 
+def row_vids_(row: GraphRow):
+    return [vid(id_type, val) for id_type, val in row.identifiers.items() if val]
+
+def reconcile_new_identities(conn, batch: list[GraphRow], unresolvable: list[GraphRow], identifier_identity_map: dict, schema_cols: dict, model, schema_name: str, table_name: str, nebula: NebulaClient):
+    if not prolly_enabled(schema_cols):
+        return 0
+    unresolvable_ids = {row.record_id for row in unresolvable}
+    identified = []
+    for row in batch:
+        if row.record_id in unresolvable_ids:
+            continue
+        row_vids = row_vids_(row)
+        if row_vids and any(v in identifier_identity_map for v in row_vids):
+            identified.append(row)
+
+    if not identified:
+        return 0
+    blocking_keys = {blocking_key(row) for row in identified}
+    candidates = fetch_probable_match_candidates(conn, blocking_keys, schema_name)
+    if not candidates:
+        return 0
+    
+    count = 0
+    for row in identified:
+        if not candidates:
+            break
+        results = score_guest(row, candidates, schema_cols, model)
+        if not results:
+            continue
+
+        current_map = fetch_identities(row_vids_(row), nebula, 1)
+        new_identity_vids = set(current_map.values())
+        if not new_identity_vids:
+            logger.info("Candidate %s scored a match but no current identity yet so skipping it", row.record_id)
+            continue
+        best = results[0]
+        for identity_vid in new_identity_vids:
+            nebula.execute_many(statements_reconciliation(best.probable_identity, identity_vid))
+        remove_identity_probable_match(conn, best.probable_identity, schema_name)
+        candidates = [c for c in candidates if c.identity_no != best.probable_identity]
+        count += 1
+        logger.info("Merged probable match identity %s into %s for %s (record %s, score=%.4f)", best.probable_identity, sorted(new_identity_vids), table_name, row.record_id, best.score)
+
+    return count
 
 def sync_table(
     read_conn,
@@ -644,8 +688,9 @@ def sync_table(
             pool_candidates = fetch_pool_candidates(audit_conn, blocking_keys, sync_config.schema_name)
             prob_result = resolve_prolly(unresolvable, schema_cols, prob_model, classifier, pool_rows=pool_candidates)
             for group_rows, score in prob_result.auto_merge_groups:
-                group_statements, _ = add_probable_identity(group_rows, score)
+                group_statements, identity = add_probable_identity(group_rows, score)
                 statements.extend(group_statements)
+                insert_into_probable_match(audit_conn, group_rows, identity, sync_config.schema_name)
             if prob_result.review_candidates:
                 review_rows = [(row_a.record_id, row_b.record_id, score, features) for row_a, row_b, score, features in prob_result.review_candidates]
                 insert_review_candidates(audit_conn, review_rows, sync_config.schema_name)
@@ -659,6 +704,9 @@ def sync_table(
         
         write_batch(nebula, batch, max_workers=sync_config.write_concurrency)
         write_identity_queries(nebula, statements)
+        count = reconcile_new_identities(audit_conn, batch, unresolvable, identifier_identity_map, schema_cols, prob_model, sync_config.schema_name, table_name, nebula)
+        if count:
+            logger.info("Reconciled %s probable_match identit%s with a deterministic identifier in %s", count, "y" if count == 1 else "ies", table_name)
         resolved = get_identities(batch, nebula)
         insert_identities(audit_conn, resolved, sync_config.schema_name)
         mark_synced(audit_conn, graph_name, batch, sync_config.schema_name, sync_config.sync_table)
@@ -734,7 +782,7 @@ def run_sync(
             ensure_candidate_pool(audit_conn, sync_config.schema_name)
             ensure_candidate_history(audit_conn, sync_config.schema_name)
             ensure_model_params(audit_conn, sync_config.schema_name)
-            ensure_probable_match_table(audit_conn, schema_name,)
+            ensure_probable_match_table(audit_conn, schema_name)
         prob_model = None
         if schema_cols and prolly_enabled(schema_cols):
             prob_model = load_latest_model(audit_conn, sync_config.schema_name)
