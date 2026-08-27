@@ -75,7 +75,47 @@ def ensure_probable_match_table(conn: _T_conn, schema_name: str, table_name: str
         conn.commit()
         logger.info("Probable match table done")
 
-def insert_into_probable_match(conn: _T_conn, rows: list)
+def insert_into_probable_match(conn: _T_conn, rows: list, identity_no: str, schema_name: str, table_name: str = "probable_match"):
+    if not rows:
+        return
+    with conn.cursor() as cur:
+        args = []
+        for row in rows:
+            pool_row = row if isinstance(row, PoolRow) else PoolRow.from_graph_row(row)
+            country, week = blocking_key(pool_row)
+            args.append((pool_row.record_id, identity_no, country, week, json.dumps(pool_row.to_dict())))
+            cur.executemany(f"""
+                INSERT INTO {schema_name}.{table_name}
+                (record_id, identity_no, blocking_key_country, blocking_key_week, row_data)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (record_id) DO UPDATE SET
+                identity_no = EXCLUDED.identity_no, row_data=EXCLUDED.row_data
+            """, args)
+    conn.commit()
+
+def fetch_probable_match_candidates(conn: _T_conn, blocking_keys: set[tuple], schema_name: str, table_name: str = "probable_match_index"):
+    if not blocking_keys:
+        return []
+    rows = []
+    with conn.cursor() as cur:
+        countries = list({key[0] for key in blocking_keys})
+        weeks = list({key[1] for key in blocking_keys})
+        cur.execute(f"""
+            SELECT row_data FROM {schema_name}.{table_name}
+            WHERE blocking_key_country = ANY(%s) AND blocking_key_week = ANY(%s)
+        """, (countries, weeks))
+        rows = cur.fetchall()
+    exact = []
+    for (row, ) in rows:
+        pool_row = PoolRow.from_dict(row)
+        if blocking_key(pool_row) in blocking_keys:
+            exact.append(pool_row)
+    return exact 
+
+def remove_identity_probable_match(conn: _T_conn, identity: str, schema_name: str, table_name: str = "probable_match_index"):
+    with conn.cursor() as cur:
+        cur.execute(f"DELETE FROM {schema_name}.{table_name} WHERRE identity_no = %s", (identity,))
+    conn.commit()
 
 def ensure_main_table(conn: _T_conn, schema_name: str, table_name: str = "record_identities"):
     logger.info(f"Ensuring {schema_name}.{table_name} exists")
@@ -694,6 +734,7 @@ def run_sync(
             ensure_candidate_pool(audit_conn, sync_config.schema_name)
             ensure_candidate_history(audit_conn, sync_config.schema_name)
             ensure_model_params(audit_conn, sync_config.schema_name)
+            ensure_probable_match_table(audit_conn, schema_name,)
         prob_model = None
         if schema_cols and prolly_enabled(schema_cols):
             prob_model = load_latest_model(audit_conn, sync_config.schema_name)
