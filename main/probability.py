@@ -231,7 +231,6 @@ def generate_candidates(rows: list[GraphRow], max_block_size: int = 200):
         for i in range(len(members)):
             for j in range(i + 1, len(members)):
                 candidates.append((members[i], members[j]))
-                
     return candidates
 
 
