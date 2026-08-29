@@ -5,9 +5,9 @@ from pathlib import Path
 MAIN_DIR = Path(__file__).resolve().parent.parent / "main"
 sys.path.insert(0, str(MAIN_DIR))
 
-# from main.probability import pair_features, FellegiSunterModel, blocking_key, generate_candidates, PoolRow, generate_cross_batch_candidates, group_auto_merging
+# from main.probability import pair_features, FellegiSunterModel, blocking_key, generate_candidates, PoolRow, generate_cross_batch_candidates, group_auto_merging, resolve_prolly, should_refit, MIN_HISTORY, score_guest
 # from main.graph_model import GraphRow
-from probability import pair_features, FellegiSunterModel, blocking_key, generate_candidates, PoolRow, generate_cross_batch_candidates, group_auto_merging
+from probability import pair_features, FellegiSunterModel, blocking_key, generate_candidates, PoolRow, generate_cross_batch_candidates, group_auto_merging, resolve_prolly, should_refit, MIN_HISTORY, score_guest
 from graph_model import GraphRow
 
 def load_schema():
@@ -167,3 +167,96 @@ class TestGroupAutoMerge(unittest.TestCase):
 
     def test_empty_no_groups(self):
         self.assertEqual(group_auto_merging([]), [])
+
+class TestResolveProbabilistically(unittest.TestCase):
+    def setUp(self):
+        self.schema = load_schema()
+    def test_matching_pair(self):
+        rows = [GraphRow.from_db_row(build_row(record_id="r1"), self.schema), GraphRow.from_db_row(build_row(record_id="r2", transaction_date="2026-01-01T06:00:00"), self.schema)]
+        result = resolve_prolly(rows, self.schema)
+        self.assertEqual(len(result.auto_merge_groups), 1)
+        self.assertEqual({r.record_id for r in result.auto_merge_groups[0][0]}, {"r1", "r2"})
+        self.assertEqual(result.unmatched_new, [])
+    def test_nonmatching_pair(self):
+        rows = [GraphRow.from_db_row(build_row(record_id="r1"), self.schema), GraphRow.from_db_row(build_row(record_id="r2", transaction_date="2026-08-01T00:00:00", merchant_name="M2", screen_width="391", screen_length="391", city="Delhi", ip_country="ind", language="hindi"), self.schema)]
+        result = resolve_prolly(rows, self.schema)
+        self.assertEqual(result.auto_merge_groups, [])
+        self.assertEqual(result.rejected_count, 0)
+    def test_single_row(self):
+        rows = [GraphRow.from_db_row(build_row("r1"), self.schema)]
+        result = resolve_prolly(rows, self.schema)
+        self.assertEqual(result.auto_merge_groups, [])
+        self.assertEqual([r.record_id for r in result.unmatched_new], ["r1"])
+    def test_all_scored(self):
+        rows = [GraphRow.from_db_row(build_row(record_id="r1"), self.schema), GraphRow.from_db_row(build_row(record_id="r2", merchant_name="M2"), self.schema),
+            GraphRow.from_db_row(build_row(record_id="r3", merchant_name="M3", screen_width="391", screen_length="391", city="Austin"), self.schema)]
+        result = resolve_prolly(rows, self.schema)
+        outcomes = {outcome for *_, outcome in result.all_scored}
+        self.assertTrue("auto_merge" in outcomes)
+        self.assertEqual(len(result.all_scored), 3)
+    def test_poolRow_match_marking_consumed(self):
+        rows = [GraphRow.from_db_row(build_row("r1"), self.schema)]
+        pool_rows = [PoolRow.from_graph_row(GraphRow.from_db_row(build_row("r2", transaction_date="2026-01-04T00:00:00", merchant_name="M2"), self.schema))]
+        result = resolve_prolly(rows, self.schema, pool_rows=pool_rows)
+        self.assertEqual(result.matched_pool_records, {"r2"})
+        self.assertEqual(result.unmatched_new, [])
+        self.assertEqual(len(result.auto_merge_groups), 1)
+
+    def test_poolRow_nonMatch_untouched(self):
+        rows = [GraphRow.from_db_row(build_row("r1"), self.schema)]
+        pool_rows = [PoolRow.from_graph_row(GraphRow.from_db_row(build_row("r2", transaction_date="2026-08-01T00:00:00", merchant_name="M2", screen_width="391", screen_length="391", city="Delhi"), self.schema))]
+        result = resolve_prolly(rows, self.schema, pool_rows=pool_rows)
+
+class TestFitEm(unittest.TestCase):
+    def setUp(self):
+        self.model = FellegiSunterModel()
+        self.schema = load_schema()
+    def test_fitem_empty_history(self):
+        before = dict(self.model.m_probs)
+        self.model.fit_em([])
+        self.assertEqual(self.model.m_probs, before)
+    def test_fitem_moves_parameters_from_priors(self):
+        before = dict(self.model.m_probs)
+        rows = []
+        for i in range(20):
+            rows.append(GraphRow.from_db_row(build_row(f"r{i}"), self.schema))
+            rows.append(GraphRow.from_db_row(build_row(f"r-{i}"), self.schema))
+        features = []
+        for i in range(0, len(rows) - 1, 2):
+            features.append(pair_features(rows[i], rows[i + 1], self.schema))
+        self.model.fit_em(features)
+        self.assertNotEqual(self.model.m_probs, before)
+        for v in list(self.model.m_probs.values()) + list(self.model.u_probs.values()):
+            self.assertTrue(0.0 <= v <= 1.0)
+            self.assertFalse(math.isnan(v))
+    def test_fitem_no_literal_zero_one(self):
+        self.model = FellegiSunterModel()
+        rows = [GraphRow.from_db_row(build_row(f"r{i}"), self.schema) for i in range(10)]
+        features = []
+        for i in range(9):
+            features.append(pair_features(rows[i], rows[i + 1], self.schema))
+        self.model.fit_em(features)
+        for v in list(self.model.m_probs.values()) + list(self.model.u_probs.values()):
+            self.assertTrue(0.0 < v < 1.0)
+
+    def test_should_refitem_respects_threshold(self):
+        self.assertFalse(should_refit(MIN_HISTORY - 1))
+        self.assertTrue(should_refit(MIN_HISTORY))
+        self.assertFalse(should_refit(9, 10))
+        self.assertTrue(should_refit(10, 10))
+
+class TestReconciliation(unittest.TestCase):
+    def setUp(self):
+        self.schema = load_schema()
+    def test_weak_strong_candidates(self):
+        pool_rows = [PoolRow.from_graph_row(GraphRow.from_db_row(build_row("r1"), self.schema), "id1"),
+            PoolRow.from_graph_row(GraphRow.from_db_row(build_row("r2", transaction_date="2026-01-01T09:00:00", merchant_name="M2"), self.schema), "id1"),
+            PoolRow.from_graph_row(GraphRow.from_db_row(build_row("r3", transaction_date="2026-01-01T01:00:00", merchant_name="M3", screen_width="391", screen_length="391", city="Austin", language="abc"), self.schema), "id2")]
+        row = GraphRow.from_db_row(build_row("r4", transaction_date="2026-01-01T10:00:00", email="a@gmail.com"), self.schema)
+        results = score_guest(row, pool_rows, self.schema)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].probable_identity, "id1")
+        self.assertEqual(results[0].member_records, {"r1", "r2"})
+    def test_no_candidates(self):
+        row = GraphRow.from_db_row(build_row("r1"), self.schema)
+        self.assertEqual(score_guest(row, [], self.schema), [])
