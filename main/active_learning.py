@@ -8,6 +8,11 @@ logger = logging.getLogger()
 
 FEATURES = ("screen_width", "screen_length", "ip_country", "city", "language", "temporal_same_day", "temporal_same_week", "temporal_same_month", "merchant_name")
 
+def _field_names(schema_cols):
+    names = set(FEATURES)
+    for item in schema_cols.get("probabilistic", []) or []:
+        names.update(item.get("fields", {}).keys())
+    return tuple(sorted(names))
 
 def parse_config(schema_cols: dict):
     out = schema_cols.get("probabilistic")
@@ -15,14 +20,15 @@ def parse_config(schema_cols: dict):
         if "active_learning_min_labels" in el.keys():
             return el
 
-def features_arr(features):
-    return numpy.array([1.0 if features.get(name) else 0.0 for name in FEATURES], dtype=float)
+def features_arr(features, field_names):
+    return numpy.array([1.0 if features.get(name) else 0.0 for name in field_names], dtype=float)
 
 @dataclass
 class LogisticClassifier:
     weights: numpy.ndarray
     bias: float
     total_trained: int
+    field_names: tuple[str, ...]
 
     def predict_prolly(self, features: dict):
         x = features_arr(features)
@@ -31,12 +37,12 @@ class LogisticClassifier:
         return 1.0 / (1.0 + math.exp(-z))
     
     def coefficients(self):
-        return dict(zip(FEATURES, (float(w) for w in self.weights)))
+        return dict(zip(self.field_names, (float(w) for w in self.weights)))
 
-def logistic_regression(labeled: list[tuple[dict, int]], l2: float = 1.0, learning_rate: float = 0.3, iterations: int = 800):
+def logistic_regression(labeled: list[tuple[dict, int]], field_names, l2: float = 1.0, learning_rate: float = 0.3, iterations: int = 800):
     if not labeled:
         raise ValueError("Logistic regression got nothing labelled to start fitting or learning")
-    x = numpy.stack([features_arr(features) for features, _ in labeled])
+    x = numpy.stack([features_arr(features, field_names) for features, _ in labeled])
     y = numpy.array([label for _, label in labeled], dtype=float)
     n, d = x.shape
     weights = numpy.zeros(d)
@@ -49,7 +55,7 @@ def logistic_regression(labeled: list[tuple[dict, int]], l2: float = 1.0, learni
         grad_b = float(numpy.mean(error))
         weights -= learning_rate * grad_w
         bias -= learning_rate * grad_b
-    return LogisticClassifier(weights=weights, bias=bias, total_trained=len(labeled))
+    return LogisticClassifier(weights=weights, bias=bias, total_trained=len(labeled), field_names=field_names)
 
 def score(features: dict, fs_model, classifier: LogisticClassifier | None):
     if classifier is not None:
@@ -85,6 +91,7 @@ def fetch_labeled(conn, schema_name: str, review_table: str = "identity_review_q
 
 def maybe_fit(conn, schema_cols: dict, schema_name: str, review_table: str = "identity_review_queue"):
     config = parse_config(schema_cols)
+    field_names = _field_names(schema_cols)
     min_labels = config["active_learning_min_labels"]
     labeled = fetch_labeled(conn, schema_name, review_table)
     matches = [pair for pair in labeled if pair[1] == 1]
@@ -92,7 +99,7 @@ def maybe_fit(conn, schema_cols: dict, schema_name: str, review_table: str = "id
     if len(matches) < min_labels or len(non_match) < min_labels:
         logger.info(f"For active learning, {min_labels} are required but curr given are matched: {len(matches)} and non-matched: {len(non_match)}")
         return None
-    classifier = logistic_regression(labeled)
+    classifier = logistic_regression(labeled, field_names)
     logger.info(f"Fitted classifiers in {len(labeled)} labels {len(matches)} match / {len(non_match)} non match")
     return classifier
 

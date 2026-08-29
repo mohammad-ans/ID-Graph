@@ -55,6 +55,13 @@ FIELD_ORDER = ["screen_width", "screen_length", "ip_country", "city", "language"
 PRIORS = {"screen_width": (0.85, 0.15), "screen_length" : (0.85, 0.15), "ip_country" : (0.9, 0.35), "city": (0.75, 0.08), "language": (0.9, 0.45), "temporal_same_day": (0.5, 0.03), "temporal_same_week": (0.7, 0.12), "temporal_same_month": (0.85, 0.35), "merchant_name": (0.4, 0.15)}
 DEFAULT_PROBABILITY = 0.05
 
+def build_priors(schema_cols):
+    priors = dict(PRIORS)
+    for item in schema_cols.get("probabilistic", []):
+        for name, val in item.get("fields", {}).items():
+            priors[name] = (float(val["m"]), float(val["u"]))
+    return priors
+
 def stable_sigmoid(x):
     if x >= 0:
         z = math.exp(-x)
@@ -68,6 +75,15 @@ class FellegiSunterModel:
     u_probs: dict[str, float] = dc_field(default_factory=lambda: {k: v[1] for k, v in PRIORS.items()})
     prior_match_prolly: float = DEFAULT_PROBABILITY
 
+    @classmethod
+    def schema_mu_probs(cls, schema_cols, prior_match_prolly: float = DEFAULT_PROBABILITY):
+        priors = build_priors(schema_cols)
+        return cls(
+            m_probs = {name: val[0] for name, val in priors.items()},
+            u_probs = {name: val[1] for name, val in priors.items()},
+            prior_match_prolly=prior_match_prolly
+        )
+    
     def score(self, features: dict[str, bool]):
         log_lr = 0.0
         for fname, agree in features.items():
@@ -245,7 +261,7 @@ class ProbabilisticLinking:
 
 def resolve_prolly(rows: list[GraphRow], schema_cols: dict, model = None, classifier: LogisticClassifier | None = None, pool_rows: list[PoolRow] | None = None):
     if model is None:
-        model = FellegiSunterModel()
+        model = FellegiSunterModel.schema_mu_probs()
     config = parse_config(schema_cols)
     am_pairs = []
     review_pairs = []
@@ -286,7 +302,7 @@ class ReunionCandidate:
 
 def score_guest(row: GraphRow, probable_candidates: list[PoolRow], schema_cols: dict, model: FellegiSunterModel | None = None):
     if model is None:
-        model = FellegiSunterModel()
+        model = FellegiSunterModel.schema_mu_probs()
     config = parse_config(schema_cols)
     identity_recScore: dict[str, list[tuple[str, float]]] = {}
     for candidate in probable_candidates:

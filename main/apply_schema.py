@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import argparse
 import logging
-import time
+import time, yaml
 from pathlib import Path
-
+from schema_gen import generate_schema_ngql
 from config import NebulaConfig
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -47,6 +47,11 @@ def execute_or_raise(session, statement: str):
 def parse_args():
     parser = argparse.ArgumentParser(description="Create/update the Nebula audience graph schema.")
     parser.add_argument(
+        "--schema-yaml",
+        default=str(Path(__file__).with_name("schema.yaml")),
+        help="Path to schema.yaml, the schema is generated from this by default"
+    )
+    parser.add_argument(
         "--schema-file",
         default=str(Path(__file__).with_name("schema.ngql")),
         help="Path to an nGQL schema file.",
@@ -72,15 +77,17 @@ def main():
 
     args = parse_args()
     config = NebulaConfig.from_env()
-    statements = split_ngql(Path(args.schema_file).read_text())
-    logger.info(
-        "Loaded Nebula schema file: path=%s statements=%s target=%s:%s/%s",
-        args.schema_file,
-        len(statements),
-        config.host,
-        config.port,
-        config.space,
-    )
+    if args.schema_file:
+        statements = split_ngql(Path(args.schema_file).read_text())
+        logger.info(
+            "Loaded static Nebula schema file: path=%s statements=%s target=%s:%s/%s",
+            args.schema_file, len(statements), config.host, config.port, config.space,
+        )
+    else:
+        with open(args.schema_yaml) as file:
+            schema_cols = yaml.safe_load(file)
+        statements = generate_schema_ngql(schema_cols, config.space)
+        logger.info("Generated nebula schema from: path=%s statements=%s target=%s:%s/%s", args.schema_yaml, len(statements), config.host, config.port, config.space)
 
     pool_config = Config()
     pool_config.max_connection_pool_size = 2
