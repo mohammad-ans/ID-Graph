@@ -32,6 +32,17 @@ passthrough:
 record_id:
   - record_id
 
+field_roles:
+  temporal:
+    source: attributes
+    column: transaction_date
+  behavioral:
+    source: attributes
+    column: merchant_name
+  blocking_geo:
+    source: raw_signals
+    column: ip_country
+    
 resolver:
  - probabilistic: true
 probabilistic:

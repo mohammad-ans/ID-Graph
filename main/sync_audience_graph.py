@@ -75,14 +75,14 @@ def ensure_probable_match_table(conn: _T_conn, schema_name: str, table_name: str
         conn.commit()
         logger.info("Probable match table done")
 
-def insert_into_probable_match(conn: _T_conn, rows: list, identity_no: str, schema_name: str, table_name: str = "probable_match"):
+def insert_into_probable_match(conn: _T_conn, rows: list, identity_no: str, schema_name: str, schema_cols, table_name: str = "probable_match"):
     if not rows:
         return
     with conn.cursor() as cur:
         args = []
         for row in rows:
             pool_row = row if isinstance(row, PoolRow) else PoolRow.from_graph_row(row)
-            country, week = blocking_key(pool_row)
+            country, week = blocking_key(pool_row, schema_cols)
             args.append((pool_row.record_id, identity_no, country, week, json.dumps(pool_row.to_dict())))
         cur.executemany(f"""
             INSERT INTO {schema_name}.{table_name}
@@ -93,7 +93,7 @@ def insert_into_probable_match(conn: _T_conn, rows: list, identity_no: str, sche
         """, args)
     conn.commit()
 
-def fetch_probable_match_candidates(conn: _T_conn, blocking_keys: set[tuple], schema_name: str, table_name: str = "probable_match"):
+def fetch_probable_match_candidates(conn: _T_conn, blocking_keys: set[tuple], schema_name: str, schema_cols, table_name: str = "probable_match"):
     if not blocking_keys:
         return []
     rows = []
@@ -108,7 +108,7 @@ def fetch_probable_match_candidates(conn: _T_conn, blocking_keys: set[tuple], sc
     exact = []
     for (row, ) in rows:
         pool_row = PoolRow.from_dict(row)
-        if blocking_key(pool_row) in blocking_keys:
+        if blocking_key(pool_row, schema_cols) in blocking_keys:
             exact.append(pool_row)
     return exact 
 
@@ -263,14 +263,14 @@ def ensure_candidate_pool(conn: _T_conn, schema_name: str, pool_table: str = "un
     conn.commit()
     logger.info("Candidate pool table done")
 
-def insert_into_pool(conn: _T_conn, rows: list, schema_name: str, pool_table: str = "unresolved_candidate_pool"):
+def insert_into_pool(conn: _T_conn, rows: list, schema_name: str, schema_cols, pool_table: str = "unresolved_candidate_pool"):
     if not rows:
         return
     with conn.cursor() as cur:
         args = []
         for row in rows:
             pool_row = row if isinstance(row, PoolRow) else PoolRow.from_graph_row(row)
-            country, week = blocking_key(pool_row)
+            country, week = blocking_key(pool_row, schema_cols)
             args.append((pool_row.record_id, country, week, json.dumps(pool_row.to_dict())))
         cur.executemany(f"""
             INSERT INTO {schema_name}.{pool_table}
@@ -319,7 +319,7 @@ def fetch_invalid(conn : _T_conn, tablename : str, max_transactions : int, remap
     cur.close()
     return invalid_identifiers
 
-def fetch_pool_candidates(conn:_T_conn, blocking_keys: set[tuple], schema_name: str, pool_table: str = "unresolved_candidate_pool"):
+def fetch_pool_candidates(conn:_T_conn, blocking_keys: set[tuple], schema_name: str, schema_cols, pool_table: str = "unresolved_candidate_pool"):
     if not blocking_keys:
         return []
     with conn.cursor() as cur:
@@ -338,7 +338,7 @@ def fetch_pool_candidates(conn:_T_conn, blocking_keys: set[tuple], schema_name: 
     exact = []
     for (row_data,) in rows:
         pool_row = PoolRow.from_dict(row_data)
-        if blocking_key(pool_row) in blocking_keys:
+        if blocking_key(pool_row, schema_cols) in blocking_keys:
             exact.append(pool_row)
     return exact
 
@@ -593,8 +593,8 @@ def reconcile_new_identities(conn, batch: list[GraphRow], unresolvable: list[Gra
 
     if not identified:
         return 0
-    blocking_keys = {blocking_key(row) for row in identified}
-    candidates = fetch_probable_match_candidates(conn, blocking_keys, schema_name)
+    blocking_keys = {blocking_key(row, schema_cols) for row in identified}
+    candidates = fetch_probable_match_candidates(conn, blocking_keys, schema_name, schema_cols)
     if not candidates:
         return 0
     
@@ -684,18 +684,18 @@ def sync_table(
             insert_invalid_identifiers(audit_conn, invalid_identifiers_declare, sync_config.schema_name)
         if unresolvable and prolly_enabled(schema_cols):
             classifier = maybe_fit(audit_conn, schema_cols, sync_config.schema_name)
-            blocking_keys = {blocking_key(row) for row in unresolvable}
-            pool_candidates = fetch_pool_candidates(audit_conn, blocking_keys, sync_config.schema_name)
+            blocking_keys = {blocking_key(row, schema_cols) for row in unresolvable}
+            pool_candidates = fetch_pool_candidates(audit_conn, blocking_keys, sync_config.schema_name, schema_cols)
             prob_result = resolve_prolly(unresolvable, schema_cols, prob_model, classifier, pool_rows=pool_candidates)
             for group_rows, score in prob_result.auto_merge_groups:
                 group_statements, identity = add_probable_identity(group_rows, score)
                 statements.extend(group_statements)
-                insert_into_probable_match(audit_conn, group_rows, identity, sync_config.schema_name)
+                insert_into_probable_match(audit_conn, group_rows, identity, sync_config.schema_name, schema_cols)
             if prob_result.review_candidates:
                 review_rows = [(row_a.record_id, row_b.record_id, score, features) for row_a, row_b, score, features in prob_result.review_candidates]
                 insert_review_candidates(audit_conn, review_rows, sync_config.schema_name)
             remove_from_pool(audit_conn, prob_result.matched_pool_records, sync_config.schema_name)
-            insert_into_pool(audit_conn, prob_result.unmatched_new, sync_config.schema_name)
+            insert_into_pool(audit_conn, prob_result.unmatched_new, sync_config.schema_name, schema_cols)
             insert_candidate_history(audit_conn, prob_result.all_scored, sync_config.schema_name)
 
             logger.info(

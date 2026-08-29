@@ -1,6 +1,6 @@
 from logging import getLogger
 from dataclasses import dataclass, field
-from graph_model import GraphRow
+from graph_model import GraphRow, get_role
 import datetime
 import hashlib
 from nebula_client import NebulaClient
@@ -116,7 +116,7 @@ def cluster_identifiers(rows : list[GraphRow], static_invalid_identifiers : dict
             unresolvable.append(row)
             continue
         if phone_gap:
-            date = parse_date(row.attributes.get("transaction_date"))
+            date = parse_date(get_role(row, schema_cols, "temporal"))
             if date is not None:
                 if identifiers[0] in transaction_dates:
                     transaction_dates[identifiers[0]] = min(transaction_dates[identifiers[0]], date)

@@ -5,8 +5,6 @@ from pathlib import Path
 MAIN_DIR = Path(__file__).resolve().parent.parent / "main"
 sys.path.insert(0, str(MAIN_DIR))
 
-# from main.probability import pair_features, FellegiSunterModel, blocking_key, generate_candidates, PoolRow, generate_cross_batch_candidates, group_auto_merging, resolve_prolly, should_refit, MIN_HISTORY, score_guest
-# from main.graph_model import GraphRow
 from probability import pair_features, FellegiSunterModel, blocking_key, generate_candidates, PoolRow, generate_cross_batch_candidates, group_auto_merging, resolve_prolly, should_refit, MIN_HISTORY, score_guest
 from graph_model import GraphRow
 
@@ -96,13 +94,15 @@ class TestFellegiSunterModel(unittest.TestCase):
         self.assertFalse(math.isnan(score2) or math.isinf(score2))
 
 class TestBlockingKey(unittest.TestCase):
+    def setUp(self):
+        self.schema = load_schema()
     def test_grouping(self):
         schema = load_schema()
         a = GraphRow.from_db_row(build_row(record_id="r1"), schema)
         b = GraphRow.from_db_row(build_row(record_id="r2"), schema)
         c = GraphRow.from_db_row(build_row(record_id="r3", transaction_date="2026-07-01T00:00:00", merchant_name="M", screen_width="390", screen_length="390", city="Delhi", ip_country="ind", language="Hindi"), schema)
-        self.assertTrue(blocking_key(a) == blocking_key(b))
-        self.assertTrue(blocking_key(a) != blocking_key(c))
+        self.assertTrue(blocking_key(a, self.schema) == blocking_key(b, self.schema))
+        self.assertTrue(blocking_key(a, self.schema) != blocking_key(c, self.schema))
 
 class TestGenerateCandidates(unittest.TestCase):
     def setUp(self):
@@ -111,7 +111,7 @@ class TestGenerateCandidates(unittest.TestCase):
         rows = [GraphRow.from_db_row(build_row(record_id="r1"), self.schema),
             GraphRow.from_db_row(build_row(record_id="r2"), self.schema),
             GraphRow.from_db_row(build_row(record_id="r3", transaction_date="2026-07-01T00:00:00", merchant_name="M", screen_width="390", screen_length="390", city="Delhi", ip_country="ind", language="Hindi"), self.schema)]
-        candidates = generate_candidates(rows)
+        candidates = generate_candidates(rows, self.schema)
         pairs = {(x.record_id, y.record_id) for x, y in candidates}
         self.assertTrue(("r1", "r2") in pairs)
         self.assertFalse(("r1", "r3") in pairs)
@@ -119,11 +119,11 @@ class TestGenerateCandidates(unittest.TestCase):
 
     def test_single_row(self):
         rows = [GraphRow.from_db_row(build_row(record_id="r1"), self.schema)]
-        self.assertEqual(generate_candidates(rows), [])
+        self.assertEqual(generate_candidates(rows, self.schema), [])
 
     def test_max_block_size(self):
         rows = [GraphRow.from_db_row(build_row(record_id=f"r{i}"), self.schema) for i in range(10)]
-        candidates = generate_candidates(rows, max_block_size=5)
+        candidates = generate_candidates(rows, self.schema, max_block_size=5)
         print(len(candidates))
         self.assertEqual(len(candidates), 10)
 
@@ -131,7 +131,7 @@ class TestGenerateCandidates(unittest.TestCase):
         rows = [GraphRow.from_db_row(build_row(record_id="r1"), self.schema)]
         pool_rows = [PoolRow.from_graph_row(GraphRow.from_db_row(build_row(record_id="r2"), self.schema)),
          PoolRow.from_graph_row(GraphRow.from_db_row(build_row(record_id="r3"), self.schema))]
-        candidates = generate_cross_batch_candidates(rows, pool_rows)
+        candidates = generate_cross_batch_candidates(rows, pool_rows, self.schema)
         pairs = [(x.record_id, y.record_id) for x, y in candidates]
         self.assertTrue(("r1", "r2") in pairs)
         self.assertTrue(("r1", "r3") in pairs)
@@ -140,7 +140,7 @@ class TestGenerateCandidates(unittest.TestCase):
     def test_blocking_key_for_pool_rows(self):
         rows = [GraphRow.from_db_row(build_row(record_id="r1"), self.schema)]
         pool_rows = [PoolRow.from_graph_row(GraphRow.from_db_row(build_row(record_id="r2", transaction_date="2026-02-02T00:00:00"), self.schema))]
-        candidates = generate_cross_batch_candidates(rows, pool_rows)
+        candidates = generate_cross_batch_candidates(rows, pool_rows, schema_cols=self.schema)
         self.assertEqual(candidates, [])
 
 class TestGroupAutoMerge(unittest.TestCase):
@@ -206,6 +206,8 @@ class TestResolveProbabilistically(unittest.TestCase):
         rows = [GraphRow.from_db_row(build_row("r1"), self.schema)]
         pool_rows = [PoolRow.from_graph_row(GraphRow.from_db_row(build_row("r2", transaction_date="2026-08-01T00:00:00", merchant_name="M2", screen_width="391", screen_length="391", city="Delhi"), self.schema))]
         result = resolve_prolly(rows, self.schema, pool_rows=pool_rows)
+        self.assertEqual(result.matched_pool_records, set())
+        self.assertEqual([r.record_id for r in result.unmatched_new], ["r1"])
 
 class TestFitEm(unittest.TestCase):
     def setUp(self):
@@ -256,7 +258,7 @@ class TestReconciliation(unittest.TestCase):
         results = score_guest(row, pool_rows, self.schema)
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].probable_identity, "id1")
-        self.assertEqual(results[0].member_records, {"r1", "r2"})
+        self.assertEqual(results[0].member_records, ["r1", "r2"])
     def test_no_candidates(self):
         row = GraphRow.from_db_row(build_row("r1"), self.schema)
         self.assertEqual(score_guest(row, [], self.schema), [])

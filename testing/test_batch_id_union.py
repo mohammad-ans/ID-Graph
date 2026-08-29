@@ -1,5 +1,5 @@
 from __future__ import annotations
-import sys
+import sys, yaml
 import unittest
 from pathlib import Path
 
@@ -9,19 +9,9 @@ sys.path.insert(0, str(MAIN_DIR))
 from batch_id_union import UnionFind, cluster_identifiers, distinct_identifiers, InvalidIdentifiers, parse_date, valid_identifiers
 from graph_model import GraphRow
 
-SCHEMA_COLS = {
-    "identifiers" : [
-        {"name": "email", "column": "hashed_email", "pre_hashed": True, "include_in_belongs_to": True},
-        {"name": "phone", "column": "hashed_phone", "pre_hashed": True, "include_in_belongs_to": True},
-        {"name": "maid", "column": "maid", "pre_hashed": False, "include_in_belongs_to": False}
-    ],
-    "signal_groups": [
-        {"name":"device_props", "columns": ["screen_width", "screen_length"]},
-        {"name": "ip_loc", "columns": ["ip_country", "city", "language"]}
-    ],
-    "passthrough": ["transaction_date", "merchant_name", "merchant_url", "source_table"],
-    "record_id": ["record_id"]
-}
+SCHEMA_COLS = None
+with open(MAIN_DIR / "schema.yaml") as file:
+    SCHEMA_COLS = yaml.safe_load(file)
 
 def row(record_id, email=None, phone=None, transaction_date=None):
     return GraphRow.from_db_row({"record_id": record_id, "source_table": "orders", "transaction_date": transaction_date, "merchant_name": "Test", "merchant_url": None, "hashed_email": email, "hashed_phone": phone, "maid": None, "screen_width": None, "screen_length": None, "ip_country": None, "city": None, "language": None}, SCHEMA_COLS)

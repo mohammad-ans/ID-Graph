@@ -3,7 +3,7 @@ import math
 from dataclasses import dataclass, field as dc_field
 from datetime import datetime
 import numpy
-from graph_model import GraphRow, record_vid, update_vertex
+from graph_model import GraphRow, record_vid, update_vertex, get_role
 from active_learning import LogisticClassifier, score as al_score
 
 TIME_SLOTS = (("temporal_same_day", 1), ("temporal_same_week", 7), ("temporal_same_month", 30))
@@ -160,14 +160,14 @@ class PoolRow:
     def from_dict(cls, d: dict):
         return cls(record_id=d["record_id"], raw_signals=d["raw_signals"], attributes=d["attributes"], identity_no=d.get("identity_no"))
 
-def generate_cross_batch_candidates(rows: list[GraphRow], pool_rows: list[PoolRow], max_block_size: int = 200):
-    new_pairs = generate_candidates(rows, max_block_size)
+def generate_cross_batch_candidates(rows: list[GraphRow], pool_rows: list[PoolRow], schema_cols, max_block_size: int = 200):
+    new_pairs = generate_candidates(rows, schema_cols, max_block_size)
     pool_block = {}
     for row in pool_rows:
-        pool_block.setdefault(blocking_key(row), []).append(row)
+        pool_block.setdefault(blocking_key(row, schema_cols), []).append(row)
     cross_pairs = []
     for row in rows:
-        members = pool_block.get(blocking_key(row), [])[:max_block_size]
+        members = pool_block.get(blocking_key(row, schema_cols), [])[:max_block_size]
         for pool_row in members:
             cross_pairs.append((row, pool_row))
     return new_pairs + cross_pairs
@@ -215,13 +215,13 @@ def week_bucket(date: str | None):
     iso = d.isocalendar()
     return f"{iso[0]}-W{iso[1]}"
 
-def blocking_key(row: GraphRow):
-    return (row.raw_signals.get("ip_country"), week_bucket(row.attributes.get("transaction_date")))
+def blocking_key(row: GraphRow, schema_cols):
+    return (get_role(row, schema_cols, "blocking_geo"), week_bucket(get_role(row, schema_cols, "temporal")))
 
-def generate_candidates(rows: list[GraphRow], max_block_size: int = 200):
+def generate_candidates(rows: list[GraphRow], schema_cols, max_block_size: int = 200):
     blocks = {}
     for row in rows:
-        blocks.setdefault(blocking_key(row), []).append(row)
+        blocks.setdefault(blocking_key(row, schema_cols), []).append(row)
     candidates = []
     for members in blocks.values():
         if len(members) < 2:
@@ -236,7 +236,7 @@ def generate_candidates(rows: list[GraphRow], max_block_size: int = 200):
 
 @dataclass
 class ProbabilisticLinking:
-    auto_merge_groups: list[list[GraphRow]]
+    auto_merge_groups: list[tuple[list[GraphRow]]]
     review_candidates: list[tuple[GraphRow, GraphRow, float, dict]]
     rejected_count: int
     matched_pool_records: set[str] = dc_field(default_factory=set)
@@ -252,9 +252,9 @@ def resolve_prolly(rows: list[GraphRow], schema_cols: dict, model = None, classi
     rejected = 0
     candidates = None
     if pool_rows:
-        candidates = generate_cross_batch_candidates(rows, pool_rows)
+        candidates = generate_cross_batch_candidates(rows, pool_rows, schema_cols)
     else:
-        candidates = generate_candidates(rows)
+        candidates = generate_candidates(rows, schema_cols)
     matched_new = set()
     matched_pool = set()
     all_scored = []
@@ -290,7 +290,7 @@ def score_guest(row: GraphRow, probable_candidates: list[PoolRow], schema_cols: 
     config = parse_config(schema_cols)
     identity_recScore: dict[str, list[tuple[str, float]]] = {}
     for candidate in probable_candidates:
-        if blocking_key(candidate) != blocking_key(row):
+        if blocking_key(candidate, schema_cols) != blocking_key(row, schema_cols):
             continue
         features = pair_features(row, candidate, schema_cols)
         score = model.score(features)

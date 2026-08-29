@@ -76,6 +76,22 @@ def vid(prefix: str, value: str) -> str:
 def record_vid(table_name: str, record_id: str) -> str:
     return vid("record", f"{normalize_token(table_name)}:{record_id}")
 
+def field_role_column(schema_cols, role):
+    field_roles = schema_cols.get("field_roles", {}).get(role)
+    return field_roles["column"] if field_roles else None
+
+def get_role(row: GraphRow, schema_cols, role):
+    field_roles = schema_cols.get("field_roles", {}).get(role)
+    if field_roles is None:
+        return field_roles
+    source = field_roles["source"]
+    column = field_roles["column"]
+    if source == "attributes":
+        return row.attributes.get(column)
+    elif source == "raw_signals":
+        return row.attributes.get(column)
+    return None
+
 def process_user_agent(user_agent : str):
     if user_agent is None:
         return user_agent
@@ -282,11 +298,12 @@ def parse_date(date : str):
         return None
 
 
-def check_phone_gap(phone : str, p_date : datetime.datetime, nebula: NebulaClient):
+def check_phone_gap(phone : str, p_date : datetime.datetime, nebula: NebulaClient, schema_cols):
     try:
+        date_column = field_role_column(schema_cols, "temporal")
         result = nebula.execute(
             f'GO FROM "{phone}" OVER has_phone REVERSELY '
-            f'YIELD properties($$).transaction_date AS t_date'
+            f'YIELD properties($$).{date_column} AS t_date'
             )
         dates = []
         for i in range(result.row_size()):
@@ -305,7 +322,7 @@ def check_phone_gap(phone : str, p_date : datetime.datetime, nebula: NebulaClien
     except Exception:
         return False
 
-def rules(identity_matches : dict[str, list[str]], transaction_dates : dict[str, datetime.datetime] | None, nebula):
+def rules(identity_matches : dict[str, list[str]], transaction_dates : dict[str, datetime.datetime] | None, nebula, schema_cols):
     valid_merges = set()
     for identity, identifiers in identity_matches.items():
         for identifier in identifiers:
@@ -318,7 +335,7 @@ def rules(identity_matches : dict[str, list[str]], transaction_dates : dict[str,
                     date = datetime.datetime.now()
                     if identifier in transaction_dates:
                         date = transaction_dates[identifier]
-                    if check_phone_gap(identifier, date, nebula):
+                    if check_phone_gap(identifier, date, nebula, schema_cols):
                         valid_merges.add(identity)
                         break
                 else:
@@ -343,7 +360,7 @@ def belongs_to_identity(identifier_identity_map : dict[str, str], cluster_map: d
             else:
                 new_identifiers.append(identifier)
 
-        valid_merges = rules(identity_matches, transaction_dates, nebula)
+        valid_merges = rules(identity_matches, transaction_dates, nebula, schema_cols)
         if len(valid_merges) == 0:
             total_identifiers = len(component.identifiers)
             today = datetime.datetime.now().isoformat()
