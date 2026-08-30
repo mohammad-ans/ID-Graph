@@ -15,10 +15,10 @@ def _field_names(schema_cols):
     return tuple(sorted(names))
 
 def parse_config(schema_cols: dict):
-    out = schema_cols.get("probabilistic")
-    for el in out:
-        if "active_learning_min_labels" in el.keys():
-            return el
+    out = {}
+    for el in schema_cols.get("probabilistic", []) or []:
+        out.update(el)
+    return out
 
 def features_arr(features, field_names):
     return numpy.array([1.0 if features.get(name) else 0.0 for name in field_names], dtype=float)

@@ -24,7 +24,7 @@ def generate_schema_ngql(schema_cols: dict, space_name: str):
         statements.append(f"CREATE TAG IF NOT EXISTS {name}(value string)")
         statements.append(f"CREATE EDGE IF NOT EXISTS has_{name}()")
     statements.append("""
-        CREATE EDGE IF NOT EXISTS probable_match(
+        CREATE EDGE IF NOT EXISTS belongs_to(
             start_date double,
             end_date string
         )
