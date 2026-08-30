@@ -1,6 +1,7 @@
 from __future__ import annotations
 import argparse, csv, json
-import os, sys
+import os, sys, re
+import logging
 from pathlib import Path
 
 MAIN_DIR = Path(__file__).resolve().parent.parent / "main"
@@ -9,7 +10,26 @@ sys.path.insert(0, str(MAIN_DIR))
 from config import PostgresConfig
 from sync_audience_graph import connect_postgres
 
-ALLOWED = {"text", "integer", "bigint", "numeric", "real", "boolean", "date", "timestamp", "jsonb", "uuid"}
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
+
+IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+COLUMN_RE = re.compile(r"[^a-z0-9_]+")
+ALLOWED = {"text", "integer", "bigint", "numeric", "real", "boolean", "date", "timestamp", "jsonb", "uuid", "smallint", "double precision", "timestamptz"}
+
+def normalize_name(col):
+    name = col.strip().lower()
+    name = COLUMN_RE.sub("_", name).strip("_")
+    if not name:
+        raise ValueError(f"Column name {col!r} normalizes to empty name")
+    if name[0].isdigit():
+        name = "col_" + name
+    return name
+
+def identifier_validation(name: str, type_: str):
+    if not IDENTIFIER_RE.match(name):
+        raise ValueError(f"{name!r} {type_} is not a safe postgres identifier")
+    return name
 
 def read_csv_header(csv_path: Path):
     with open(csv_path, newline="", encoding="utf-8-sig") as file:
@@ -22,24 +42,32 @@ def build_column_plan(header: list[str], column_types: dict[str, str] | None):
     column_types = column_types or {}
     plan = []
     seen = set()
-    for col in header:
+    for col_name in header:
+        col = normalize_name(col_name)
         if col in seen:
             raise ValueError("Two csv columns have same name, ofc a database cannot have that")
         seen.add(col)
         if col in column_types:
-            pg_type = column_types[col]
-        elif col in column_types:
+            pg_type,  = column_types[col]
+        elif col_name in column_types:
+            pg_type = column_types[col_name]
+        else:
             pg_type = "text", None
+        
         if pg_type not in ALLOWED:
             raise ValueError(f"Unknown column type")
         plan.append((col, col, pg_type))
+
     return plan
 
 def create_table(conn, schema_name, table_name, column_plan):
+    identifier_validation(schema_name, "schema name")
+    identifier_validation(table_name, "table name")
     with conn.cursor() as cur:
         columns = ", ".join(f'"{col}" {type_}' for _, col, type_ in column_plan)
         cur.execute(f"CREATE TABLE {schema_name}.{table_name} ({columns});")
     conn.commit()
+    logger.info(f"Created table {schema_name}.{table_name}")
 
 def copy_data(conn, path: Path, schema_name, table_name, column_plan):
     columns = ", ".join(f'"{col}"' for _, col, _ in column_plan)
@@ -47,7 +75,12 @@ def copy_data(conn, path: Path, schema_name, table_name, column_plan):
         with conn.cursor() as cur:
             sql = (f"COPY {schema_name}.{table_name} ({columns}) FROM STDIN WITH (FORMAT csv, HEADER true, NULL '')")
             cur.copy_export(sql, file)
-        conn.commit()
+    conn.commit()
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT COUNT(*) FROM {schema_name}.{table_name};")
+        (count,) = cur.fetchone()
+    logger.info(f"Loaded {count} rows into {schema_name}.{table_name}")
+    return count
 
 def load_csv(conn, path: Path, schema_name, table_name, column_types):
     header = read_csv_header(path)
@@ -75,8 +108,8 @@ def main():
             column_types = json.load(file)
     conn = connect_postgres(PostgresConfig.from_env())
     try:
-        load_csv(conn, Path(args.csv), schema_name, table_name, column_types)
-        print("Loaded the csv successfully into the db")
+        count = load_csv(conn, Path(args.csv), schema_name, table_name, column_types)
+        print(f"Loaded the csv successfully into the db with {count} rows")
     finally:
         conn.close()
 if __name__ == "__main__":
