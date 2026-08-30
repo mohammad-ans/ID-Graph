@@ -1,0 +1,37 @@
+Linked in and twitter
+1453 and 1000
+1902 and 1027
+362 and 1177
+1178 and 997
+118 and 573
+1209 and 680
+461 and 1228
+1734 and 1239
+1706 and 1360
+1390 and 260
+932 and 1424
+1800 and 144
+146 and 78
+170 and 1480
+854 and 1565
+1623 and 1658
+1634 and 796
+830 and 1723
+264 and 1818
+592 and 1860
+379 and 1914
+697 and 1972
+874 and 253
+27 and 454
+621 and 276
+278 and 531
+53 and 336
+517 and 388
+872 and 452
+900 and 5
+546 and 557
+791 and 855
+
+Email
+1188 and 1208
+888 and 44
