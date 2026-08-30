@@ -1,5 +1,8 @@
 import os
 from dataclasses import dataclass
+from dotenv import load_dotenv
+
+load_dotenv()
 
 @dataclass(frozen=True)
 class PostgresConfig:
@@ -13,7 +16,7 @@ class PostgresConfig:
     def from_env(cls):
         return cls(
             host=os.environ["DB_HOST"],
-            port=os.environ.get("DB_PORT", "5432"),
+            port=os.environ.get("DB_PORT", "5433"),
             dbname=os.environ["DB_NAME"],
             user=os.environ["DB_USER"],
             password=os.environ["DB_PASS"],

@@ -4,7 +4,7 @@ import main.active_learning as active_learning
 from main.sync_audience_graph import connect_postgres
 from main.config import PostgresConfig
 
-SCHEMA_PATH = Path(__file__).with_name("schema.yaml")
+SCHEMA_PATH = Path(__file__).with_name("cschema.yaml")
 
 def load_schema():
     with open(SCHEMA_PATH) as file:

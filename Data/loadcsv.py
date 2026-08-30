@@ -48,14 +48,14 @@ def build_column_plan(header: list[str], column_types: dict[str, str] | None):
             raise ValueError("Two csv columns have same name, ofc a database cannot have that")
         seen.add(pg_col)
         if pg_col in column_types:
-            pg_type,  = column_types[pg_col]
+            pg_type  = column_types[pg_col]
         elif col_name in column_types:
             pg_type = column_types[col_name]
         else:
-            pg_type = "text", None
+            pg_type = "text"
         
         if pg_type not in ALLOWED:
-            raise ValueError(f"Unknown column type")
+            raise ValueError(f"Unknown column type {pg_type}")
         plan.append((col_name, pg_col, pg_type))
 
     return plan
@@ -74,8 +74,8 @@ def copy_data(conn, path: Path, schema_name, table_name, column_plan):
     columns = ", ".join(f'"{col}"' for _, col, _ in column_plan)
     with open(path, newline="", encoding="utf-8-sig") as file:
         with conn.cursor() as cur:
-            sql = (f"COPY {schema_name}.{table_name} ({columns}) FROM STDIN WITH (FORMAT csv, HEADER true, NULL '')")
-            cur.copy_export(sql, file)
+            sql = (f"COPY {schema_name}.{table_name} ({columns}) FROM STDIN WITH (FORMAT csv, HEADER true, NULL ' ')")
+            cur.copy_expert(sql, file)
     conn.commit()
     with conn.cursor() as cur:
         cur.execute(f"SELECT COUNT(*) FROM {schema_name}.{table_name};")
@@ -126,7 +126,7 @@ def main():
         print("No table name given")
         sys.exit(1)
     if args.column_types:
-        with open(args.column_type) as file:
+        with open(args.column_types) as file:
             column_types = json.load(file)
     conn = connect_postgres(PostgresConfig.from_env())
     try:

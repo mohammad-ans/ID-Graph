@@ -15,7 +15,7 @@ def generate_schema_ngql(schema_cols: dict, space_name: str):
         CREATE TAG IF NOT EXISTS identity_no(
             deprecated bool DEFAULT false,
             merged_into string DEFAULT "",
-            resolution_method string DEFAULT "deterministic
+            resolution_method string DEFAULT "deterministic"
         )
     """)
     identifiers = schema_cols.get("identifiers", [])

@@ -1,0 +1,4 @@
+{
+    "record_id": "integer",
+    "breach_year": "date"
+}

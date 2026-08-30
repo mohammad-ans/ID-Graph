@@ -8,13 +8,6 @@ logger = logging.getLogger(__name__)
 
 
 class NebulaClient:
-    """
-    Thread-safe Nebula client: holds a connection pool, not a single shared
-    session. Each execute_many() call checks out its own session from the
-    pool and releases it when done, so multiple threads can call this
-    concurrently (e.g. from a ThreadPoolExecutor) without sessions
-    colliding with each other.
-    """
 
     def __init__(self, config: NebulaConfig, pool_size: int = 10):
         self.config = config
@@ -32,8 +25,6 @@ class NebulaClient:
             ) from exc
 
         pool_config = Config()
-        # Pool needs at least as many connections as concurrent writer
-        # threads, plus a little headroom for schema/setup calls.
         pool_config.max_connection_pool_size = max(self._pool_size, 10)
         self._pool = ConnectionPool()
         logger.info(
@@ -47,7 +38,6 @@ class NebulaClient:
         if not ok:
             raise RuntimeError(f"Failed to initialize Nebula connection pool for {self.config.host}:{self.config.port}")
 
-        # Verify the space exists / is selectable before handing out sessions.
         self.execute(f"USE {self.config.space}")
         logger.info("Nebula connection pool ready for space %s", self.config.space)
         return self
@@ -63,7 +53,6 @@ class NebulaClient:
         return session
 
     def execute(self, statement: str):
-        """One-off execute on its own session -- safe to call from any thread."""
         if not statement.strip():
             return None
         session = self._checkout_session()
@@ -76,12 +65,6 @@ class NebulaClient:
             session.release()
 
     def execute_many(self, statements: list[str], chunk_size: int = 100):
-        """
-        Runs all statements on ONE checked-out session for the duration of
-        the call, so this is safe to invoke from multiple threads at once --
-        each call gets its own session from the pool, used only by that
-        call/thread, then released back when done.
-        """
         if not statements:
             return
         logger.debug("Executing %s Nebula statements with chunk_size=%s", len(statements), chunk_size)

@@ -837,7 +837,7 @@ def parse_args():
 def main():
     args = parse_args()
     cols_list = None
-    with open("schema.yaml") as file:
+    with open("cschema.yaml") as file:
         schema_cols = yaml.safe_load(file)
         cols_list = list(schema_cols["passthrough"])
         cols_list.extend(element["column"] for element in schema_cols["identifiers"])
