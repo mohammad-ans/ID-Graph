@@ -10,9 +10,10 @@ logger = getLogger(__name__)
 
 class InvalidIdentifiers:
     invalid_identifiers : dict[str, dict[str, int]]
-    def __init__(self):
-        self.invalid_identifiers = {"email" : {}, "phone" : {}}
-
+    def __init__(self, schema_cols):
+        self.invalid_identifiers = {}
+        for identifier in schema_cols["identifiers"]:
+            self.invalid_identifiers[identifier["name"]] = {}
     def invalid_relative_newD(self, batch_data : list[GraphRow]):
         MAX_IDENTIFIER_TRANSACTIONS = max(len(batch_data) / 20, 5)
         freq_map = {}
@@ -99,7 +100,7 @@ def parse_date(date : str):
 
 def cluster_identifiers(rows : list[GraphRow], static_invalid_identifiers : dict[str, set[str]], phone_gap: bool, schema_cols: dict):
 
-    invalid_identifiers = InvalidIdentifiers()
+    invalid_identifiers = InvalidIdentifiers(schema_cols)
     invalid_identifiers.add_static_identifiers(static_invalid_identifiers)
     invalid_identifiers.invalid_relative_newD(rows)
     logger.info(
@@ -142,10 +143,7 @@ def cluster_identifiers(rows : list[GraphRow], static_invalid_identifiers : dict
             cluster_map[root] = IdentityGroup(root = root)
         cluster_map[root].identifiers.add(vid)
 
-    logger.info(
-        f"Grouped identifiers from {len(rows)}"
-        f"into {len(cluster_map)} idependent identifier clusters"
-    )
+    logger.info(f"Grouped identifiers from {len(rows)} into {len(cluster_map)} idependent identifier clusters")
 
     return cluster_map, transaction_dates, unresolvable
 

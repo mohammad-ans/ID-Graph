@@ -1,8 +1,9 @@
 import yaml
 from collections import defaultdict
 
-# with open("./main/schema.yaml") as file:
-#     data_columns = yaml.safe_load(file)
+with open("./main/schema.yaml") as file:
+    data_columns = yaml.safe_load(file)
+    print(data_columns)
 #     temp = list(data_columns["passthrough"])
 #     temp.extend(element["column"] for element in data_columns["identifiers"])
 #     # for element in data_columns["signal_groups"]:
@@ -12,4 +13,4 @@ from collections import defaultdict
 
     # if data_columns["signal_groups"]
 # print(f"{'identity':>24}{'ids':>5}{'recs':>6}{'growth':>8}{'diversity':>11}{'burst':>8}{'mean_z':>9}{'max_z':<8}a")
-print(["a"] * 10)
+# print(["a"] * 10)

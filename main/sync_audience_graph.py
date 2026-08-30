@@ -474,7 +474,6 @@ def fetch_rows(conn : _T_conn, graph_name: str, table_name: str, columns: list[s
         LEFT JOIN {schema_name}.{sync_table} a
           ON a.graph_name = %s
          AND a.standardized_table = %s
-         AND a.source_table = COALESCE(t.source_table, 'unknown')
          AND a.record_id = t.record_id
         WHERE t.record_id IS NOT NULL
           AND a.record_id IS NULL
@@ -482,7 +481,7 @@ def fetch_rows(conn : _T_conn, graph_name: str, table_name: str, columns: list[s
     """
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.itersize = batch_size
-        cur.execute(query, (table_name, graph_name, table_name))
+        cur.execute(query, (graph_name, table_name))
         batch = []
         batch_no = 0
         for row in cur:
@@ -664,7 +663,7 @@ def sync_table(
             
             preview_statements = row_to_ngql(batch[0]) if batch else []
             logger.info(
-                "Dry run for %s: would sync %s rows; example statements:\n%s. Invalid identifiers: %s and data base audit tables statements %s",
+                "Dry run for %s: would sync %s rows; Example statements:\n%s\n Invalid identifiers: [%s] and data base audit tables statements: [%s]",
                 table_name, len(batch), ";\n".join(preview_statements), ",".join(invalid_identifiers_declare), ";\n".join(db_statements)
             )
 
@@ -760,11 +759,10 @@ def run_sync(
     
     results: dict[str, int] = {}
     logger.info(
-        "Graph sync configured: max_transactions=%s max_identifiers=%s tables=%s columns=%s batch_size=%s max_records=%s dry_run=%s write_concurrency=%s",
+        "Graph sync configured: max_transactions=%s max_identifiers=%s tables=%s batch_size=%s max_records=%s dry_run=%s write_concurrency=%s",
         sync_config.max_transactions,
         sync_config.max_identifiers,
         table_list,
-        schema_cols,
         sync_config.batch_size,
         sync_config.max_records,
         sync_config.dry_run,

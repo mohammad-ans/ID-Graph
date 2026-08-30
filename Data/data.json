@@ -1,4 +1,4 @@
 {
-    "record_id": "integer",
+    "record_id": "text",
     "breach_year": "date"
 }
