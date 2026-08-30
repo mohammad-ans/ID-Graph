@@ -433,7 +433,7 @@ def insert_invalid_identifiers(conn : _T_conn, identifiers: list[tuple], schema_
 
 def mark_synced(conn : _T_conn, graph_name: str, rows: Iterable[GraphRow], schema_name : str, sync_table : str):
     values = [
-        (graph_name, row.attributes.get("standardized_table", "unknown") or "unknown", row.attributes.get("source_table", "unknown") or "unknown", row.record_id)
+        (graph_name, row.attributes.get("source_table", "unknown") or "unknown", row.attributes.get("source_table", "unknown") or "unknown", row.record_id)
         for row in rows
     ]
     if not values:
