@@ -43,12 +43,12 @@ def build_column_plan(header: list[str], column_types: dict[str, str] | None):
     plan = []
     seen = set()
     for col_name in header:
-        col = normalize_name(col_name)
-        if col in seen:
+        pg_col = normalize_name(col_name)
+        if pg_col in seen:
             raise ValueError("Two csv columns have same name, ofc a database cannot have that")
-        seen.add(col)
-        if col in column_types:
-            pg_type,  = column_types[col]
+        seen.add(pg_col)
+        if pg_col in column_types:
+            pg_type,  = column_types[pg_col]
         elif col_name in column_types:
             pg_type = column_types[col_name]
         else:
@@ -56,7 +56,7 @@ def build_column_plan(header: list[str], column_types: dict[str, str] | None):
         
         if pg_type not in ALLOWED:
             raise ValueError(f"Unknown column type")
-        plan.append((col, col, pg_type))
+        plan.append((col_name, pg_col, pg_type))
 
     return plan
 
@@ -64,10 +64,11 @@ def create_table(conn, schema_name, table_name, column_plan):
     identifier_validation(schema_name, "schema name")
     identifier_validation(table_name, "table name")
     with conn.cursor() as cur:
+        cur.execute(f"DROP TABLE IF EXISTS {schema_name}.{table_name};")
         columns = ", ".join(f'"{col}" {type_}' for _, col, type_ in column_plan)
         cur.execute(f"CREATE TABLE {schema_name}.{table_name} ({columns});")
     conn.commit()
-    logger.info(f"Created table {schema_name}.{table_name}")
+    logger.info(f"Dropped any existing table with that name and created table {schema_name}.{table_name}")
 
 def copy_data(conn, path: Path, schema_name, table_name, column_plan):
     columns = ", ".join(f'"{col}"' for _, col, _ in column_plan)
@@ -82,11 +83,31 @@ def copy_data(conn, path: Path, schema_name, table_name, column_plan):
     logger.info(f"Loaded {count} rows into {schema_name}.{table_name}")
     return count
 
-def load_csv(conn, path: Path, schema_name, table_name, column_types):
+def load_csv(conn, path: Path, schema_name, table_name, column_types, primary_key):
     header = read_csv_header(path)
     column_plan = build_column_plan(header, column_types)
+    pk_col = None
+    if primary_key:
+        pg_cols = {col for _, col, _ in column_plan}
+        cols = {col for col, _, _ in column_plan}
+        if primary_key in pg_cols:
+            pk_col = primary_key
+        elif primary_key in cols:
+            pk_col = {pg_col for col_name, pg_col, _ in column_plan if col_name == primary_key}
+        else:
+            raise ValueError(f"{primary_key!r} does not matches any normalized or simple column name in csv header")
     create_table(conn, schema_name, table_name, column_plan)
-    copy_data(conn, path, schema_name, table_name, column_plan)
+    count = copy_data(conn, path, schema_name, table_name, column_plan)
+    if pk_col:
+        add_primary_key(conn, schema_name, table_name, pk_col)
+    return count
+
+def add_primary_key(conn, schema_name, table_name, primary_key):
+    identifier_validation(primary_key, "primary key column")
+    with conn.cursor() as cur:
+        cur.execute(f'ALTER TABLE {schema_name}.{table_name} ADD PRIMARY KEY ("{primary_key}");')
+    conn.commit()
+    logger.info(f"Setted {primary_key} as the primary key")
 
 def main():
     parser = argparse.ArgumentParser(description="Load csv into postgres")
@@ -94,6 +115,7 @@ def main():
     parser.add_argument("--table", default=None)
     parser.add_argument("--schema-name", default=None)
     parser.add_argument("--column-types", default=None)
+    parser.add_argument("--primary-key", required=True)
     args = parser.parse_args()
     schema_name = args.schema_name or os.environ.get("GRAPH_SCHEMA_NAME")
     if not schema_name:
@@ -108,7 +130,7 @@ def main():
             column_types = json.load(file)
     conn = connect_postgres(PostgresConfig.from_env())
     try:
-        count = load_csv(conn, Path(args.csv), schema_name, table_name, column_types)
+        count = load_csv(conn, Path(args.csv), schema_name, table_name, column_types, args.primary_key)
         print(f"Loaded the csv successfully into the db with {count} rows")
     finally:
         conn.close()
