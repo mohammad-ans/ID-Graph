@@ -1,15 +1,15 @@
 from __future__ import annotations
-import yaml
-import argparse
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Iterable, Sequence
 from collections import defaultdict
 import psycopg2
 import psycopg2.extras
 from psycopg2.extensions import connection as _T_conn
 from .config import NebulaConfig, PostgresConfig, SyncConfig
+from .postgres import connect_postgres
+from .schema import prolly_enabled as probabilistic_enabled, source_columns, validate_schema
 from .graph_model import GraphRow, row_to_ngql, belongs_to_identity, add_probable_identity, get_identities, vid, remap_identifiers_strict
 from .nebula_client import NebulaClient
 from .batch_id_union import cluster_identifiers, distinct_identifiers
@@ -20,7 +20,6 @@ import re
 import json
 
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -38,21 +37,6 @@ class SyncResult:
     rows_synced: int
     dry_run: bool
 
-
-def connect_postgres(config: PostgresConfig):
-    logger.info("Opening Postgres connection to %s:%s/%s", config.host, config.port, config.dbname)
-    return psycopg2.connect(
-        host=config.host,
-        port=config.port,
-        dbname=config.dbname,
-        user=config.user,
-        password=config.password,
-        connect_timeout=10,
-        keepalives=1,
-        keepalives_idle=60,
-        keepalives_interval=10,
-        keepalives_count=5,
-    )
 
 def ensure_probable_match_table(conn: _T_conn, schema_name: str, table_name: str = "probable_match"):
     logger.info(f"Ensuring {schema_name}.{table_name} exists")
@@ -738,43 +722,22 @@ def sync_table(
 
 
 def run_sync(
-    max_identifiers: int | None = None,
-    max_transactions: int | None = None,
-    tables: str | None = None,
-    batch_size: int | None = None,
-    max_records: int | None = None,
-    write_concurrency: int | None = None,
-    dry_run: bool = False,
-    phone_gap: bool = False,
-    remap_type: int = 0,
-    schema_name: str | None = None,
-    sync_table_name: str | None = None,
-    schema_cols: dict | None = None,
-    cols_list: list[str] = []
+    tables: str | Sequence[str],
+    schema_cols: dict,
+    pg_config: PostgresConfig,
+    nebula_config: NebulaConfig,
+    sync_config: SyncConfig,
+    cols: Sequence[str] | None = None
 
 ) -> dict:
-    
-    pg_config = PostgresConfig.from_env()
-    nebula_config = NebulaConfig.from_env()
-    env_sync_config = SyncConfig.from_env()
-    sync_config = SyncConfig(
-        max_transactions=max_transactions or env_sync_config.max_transactions,
-        max_identifiers=max_identifiers or env_sync_config.max_identifiers,
-        batch_size=batch_size or env_sync_config.batch_size,
-        max_records=max_records if max_records is not None else env_sync_config.max_records,
-        dry_run=dry_run or env_sync_config.dry_run,
-        phone_gap=phone_gap or env_sync_config.phone_gap,
-        remap_type=remap_type or env_sync_config.remap_type,
-        schema_name=schema_name,
-        sync_table=sync_table_name,
-        write_concurrency=write_concurrency or env_sync_config.write_concurrency,
-    )
-    table_list = [
-        t.strip()
-        for t in (tables).split(",")
-        if t.strip()
-    ]
-    
+    validate_schema(schema_cols)
+    if isinstance(tables, str):
+        table_list = [name.strip() for name in tables.split(",") if name.strip()]
+    else:
+        table_list = [name.strip() for name in tables if name and name.strip()]
+    cols_list = list(cols) if cols else source_columns(schema_cols)
+    probabilistic = probabilistic_enabled(schema_cols)
+
     results: dict[str, int] = {}
     logger.info(
         "Graph sync configured: max_transactions=%s max_identifiers=%s tables=%s batch_size=%s max_records=%s dry_run=%s write_concurrency=%s",
@@ -786,7 +749,6 @@ def run_sync(
         sync_config.dry_run,
         sync_config.write_concurrency,
     )
-    nebula = NebulaClient(nebula_config)
     scorer = SupernodeAnomalyScorer()
     with connect_postgres(pg_config) as read_conn, connect_postgres(pg_config) as audit_conn:
         ensure_audit_table(audit_conn, sync_config.schema_name, sync_config.sync_table)
@@ -794,22 +756,23 @@ def run_sync(
         ensure_main_table(audit_conn, sync_config.schema_name)
         if sync_config.remap_type == 3:
             ensure_invalids_table(audit_conn, sync_config.schema_name)
-        if schema_cols and prolly_enabled(schema_cols):
+
+        prob_model = None
+        if probabilistic:
             ensure_review_queue(audit_conn, sync_config.schema_name)
             ensure_candidate_pool(audit_conn, sync_config.schema_name)
             ensure_candidate_history(audit_conn, sync_config.schema_name)
             ensure_model_params(audit_conn, sync_config.schema_name)
-            ensure_probable_match_table(audit_conn, schema_name)
-        prob_model = None
-        if schema_cols and prolly_enabled(schema_cols):
+            ensure_probable_match_table(audit_conn, sync_config.schema_name)
+
             prob_model = load_latest_model(audit_conn, sync_config.schema_name)
-            count = count_candidates_history(audit_conn, sync_config.schema_name)
-            if should_refit(count):
+            history_count = count_candidates_history(audit_conn, sync_config.schema_name)
+            if should_refit(history_count):
                 feature_rows = fetch_candidate_features(audit_conn, sync_config.schema_name)
                 if prob_model is None:
-                    prob_model = FellegiSunterModel()
+                    prob_model = FellegiSunterModel.schema_mu_probs(schema_cols)
                 prob_model.fit_em(feature_rows)
-                save_model(audit_conn, prob_model, count, sync_config.schema_name)
+                save_model(audit_conn, prob_model, history_count, sync_config.schema_name)
             
         if sync_config.dry_run:
             for table in table_list:
@@ -824,60 +787,3 @@ def run_sync(
                 results[table] = result.rows_synced
 
     return results
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(description="Sync standardized audience rows into Nebula Graph.")
-    parser.add_argument(
-        "--tables",
-        default=None,
-        help="Comma-separated standardized table names to sync.",
-    )
-    parser.add_argument(
-        "--columns",
-        default=None,
-        help="Comma-separated standardized table columns to sync"
-    )
-    parser.add_argument("--batch-size", type=int, default=None)
-    parser.add_argument("--max-records", type=int, default=None)
-    parser.add_argument("--write-concurrency", type=int, default=None)
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--max-identifiers", type=int, default=None)
-    parser.add_argument("--max-transactions", type=int, default=None)
-    parser.add_argument("--phone-gap", action="store_true")
-    parser.add_argument("--remap-type", type=int, default=0)
-    parser.add_argument("--schema-name", default=None)
-    parser.add_argument("--sync-table", default=None)
-    return parser.parse_args()
-
-
-def main():
-    args = parse_args()
-    cols_list = None
-    with open("cschema.yaml") as file:
-        schema_cols = yaml.safe_load(file)
-        cols_list = list(schema_cols["passthrough"])
-        cols_list.extend(element["column"] for element in schema_cols["identifiers"])
-        for element in schema_cols["signal_groups"]:
-            cols_list.extend(element["columns"])
-        cols_list.append(schema_cols["record_id"][0])
-
-    run_sync(
-        max_identifiers = args.max_identifiers,
-        max_transactions=args.max_transactions,
-        tables=args.tables,
-        batch_size=args.batch_size,
-        max_records=args.max_records,
-        write_concurrency=args.write_concurrency,
-        dry_run=args.dry_run,
-        phone_gap=args.phone_gap,
-        remap_type=args.remap_type,
-        schema_name=args.schema_name,
-        sync_table_name=args.sync_table,
-        schema_cols=schema_cols,
-        cols_list = cols_list
-    )
-
-
-if __name__ == "__main__":
-    main()
