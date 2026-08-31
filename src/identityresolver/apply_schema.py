@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-import argparse
-import logging
-import time, yaml
+import logging, time
 from pathlib import Path
-from .schema_gen import generate_schema_ngql
 from .config import NebulaConfig
+from .schema_gen import generate_schema_ngql
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
+
+__all__ = ["apply_schema", "split_ngql"]
 
 
 def split_ngql(script: str) -> list[str]:
@@ -31,84 +30,59 @@ def split_ngql(script: str) -> list[str]:
             buffer = []
         else:
             buffer.append(ch)
+        i += 1
     tail = "".join(buffer).strip()
     if tail:
         statements.append(tail)
     return [s for s in statements if s]
 
 
-def execute_or_raise(session, statement: str):
+def _execute_or_raise(session, statement: str):
     result = session.execute(statement)
     if not result.is_succeeded():
         raise RuntimeError(f"Nebula query failed: {result.error_msg()}\nStatement:\n{statement}")
     return result
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Create/update the Nebula audience graph schema.")
-    parser.add_argument(
-        "--schema-yaml",
-        default="schema.yaml",
-        help="Path to schema.yaml, the schema is generated from this by default"
-    )
-    parser.add_argument(
-        "--schema-file",
-        default=None,
-        help="Path to an nGQL schema file.",
-    )
-    parser.add_argument(
-        "--space-create-wait-seconds",
-        type=int,
-        default=10,
-        help="Wait after CREATE SPACE so the new space is visible before USE.",
-    )
-    return parser.parse_args()
-
-
-def main():
+def apply_schema(nebula_config: NebulaConfig, schema_cols: dict | None = None, ngql_file: str | Path | None = None, drop_existing: bool = False, space_create_wait_seconds: int = 10) -> int:
     try:
         from nebula3.Config import Config
         from nebula3.gclient.net import ConnectionPool
     except ImportError as exc:
         raise RuntimeError(
-            "nebula3-python is required for graph schema bootstrap. Install it in the job image "
-            "with `pip install nebula3-python`."
+            "nebula3-python is required for graph schema. "
+            "Install it with `pip install nebula3-python`."
         ) from exc
 
-    args = parse_args()
-    config = NebulaConfig.from_env()
-    if args.schema_file:
-        statements = split_ngql(Path(args.schema_file).read_text())
+    if (schema_cols is None) == (ngql_file is None):
+        raise ValueError("Pass exactly one of schema_cols or ngql_file")
+
+    if ngql_file is not None:
+        statements = split_ngql(Path(ngql_file).read_text(encoding="utf-8"))
         logger.info(
             "Loaded static Nebula schema file: path=%s statements=%s target=%s:%s/%s",
-            args.schema_file, len(statements), config.host, config.port, config.space,
+            ngql_file, len(statements), nebula_config.host, nebula_config.port, nebula_config.space,
         )
     else:
-        with open(str(Path(__file__).with_name(args.schema_yaml))) as file:
-            schema_cols = yaml.safe_load(file)
-        statements = generate_schema_ngql(schema_cols, config.space)
-        logger.info("Generated nebula schema from: path=%s statements=%s target=%s:%s/%s", args.schema_yaml, len(statements), config.host, config.port, config.space)
+        statements = generate_schema_ngql(schema_cols, nebula_config.space, drop_existing=drop_existing)
+        logger.info("Generated Nebula schema from column schema: statements=%s target=%s:%s/%s", len(statements), nebula_config.host, nebula_config.port, nebula_config.space)
 
     pool_config = Config()
     pool_config.max_connection_pool_size = 2
     pool = ConnectionPool()
-    ok = pool.init([(config.host, config.port)], pool_config)
-    if not ok:
-        raise RuntimeError(f"Failed to initialize Nebula connection pool for {config.host}:{config.port}")
+    if not pool.init([(nebula_config.host, nebula_config.port)], pool_config):
+        raise RuntimeError(f"Failed to initialize Nebula connection pool for {nebula_config.host}:{nebula_config.port}")
 
-    session = pool.get_session(config.username, config.password)
+    session = pool.get_session(nebula_config.username, nebula_config.password)
     try:
-        for idx, statement in enumerate(statements, start=1):
-            logger.info("Applying schema statement %s/%s: %s", idx, len(statements), statement.splitlines()[0][:120])
-            execute_or_raise(session, statement)
-            if statement.upper().startswith("CREATE SPACE"):
-                logger.info("Waiting %s seconds for Nebula space propagation", args.space_create_wait_seconds)
-                time.sleep(args.space_create_wait_seconds)
+        for index, statement in enumerate(statements, start=1):
+            logger.info("Applying schema statement %s/%s: %s", index, len(statements), statement.splitlines()[0][:120])
+            _execute_or_raise(session, statement)
+            if statement.upper().lstrip().startswith("CREATE SPACE"):
+                logger.info("Waiting %ss for Nebula space propagation", space_create_wait_seconds)
+                time.sleep(space_create_wait_seconds)
     finally:
         session.release()
         pool.close()
     logger.info("Nebula schema apply complete")
-
-
-if __name__ == "__main__":
-    main()
+    return len(statements)

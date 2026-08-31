@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-def generate_schema_ngql(schema_cols: dict, space_name: str):
+def generate_schema_ngql(schema_cols: dict, space_name: str, drop_existing: bool = False, partition_num: int = 15, replica_factor: int = 1, vid_length: int = 128):
     statements = []
-    statements.append("DROP SPACE audience_graph_test;")
-    statements.append(f"CREATE SPACE IF NOT EXISTS {space_name} (partition_num=15, replica_factor=1, vid_type=fixed_string(128))")
+    if drop_existing:
+        statements.append(f"DROP SPACE IF EXISTS {space_name};")
+    statements.append(f"CREATE SPACE IF NOT EXISTS {space_name} (partition_num={partition_num}, replica_factor={replica_factor}, vid_type=fixed_string({vid_length}))")
     statements.append(f"USE {space_name}")
     passthrough_cols = schema_cols.get("passthrough", [])
     record_props = ", ".join(f"{col} string" for col in passthrough_cols)
