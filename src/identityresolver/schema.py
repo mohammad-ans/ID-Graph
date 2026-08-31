@@ -14,7 +14,7 @@ DEFAULT_PHONE_GAP_DAYS = 720
 _COLUMN_SAFE_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 class SchemaError(ValueError):
-    "Column schema is missing keys or is malformed"
+    """Column schema is missing keys or is malformed"""
 
 def load_schema(path):
     path = Path(path)
