@@ -2,7 +2,7 @@ from __future__ import annotations
 
 def generate_schema_ngql(schema_cols: dict, space_name: str):
     statements = []
-    # statements.append("DROP SPACE audience_graph_test;")
+    statements.append("DROP SPACE audience_graph_test;")
     statements.append(f"CREATE SPACE IF NOT EXISTS {space_name} (partition_num=15, replica_factor=1, vid_type=fixed_string(128))")
     statements.append(f"USE {space_name}")
     passthrough_cols = schema_cols.get("passthrough", [])
