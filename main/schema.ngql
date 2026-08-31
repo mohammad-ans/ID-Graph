@@ -5,3 +5,43 @@ CREATE SPACE IF NOT EXISTS audience_graph_test(
 );
 
 USE audience_graph_test;
+
+CREATE TAG IF NOT EXISTS record(
+  source_table string,
+  merchant_url string,
+  merchant_name string,
+  transaction_date string,
+);
+
+CREATE TAG IF NOT EXISTS fg_hash(
+  device_props string,
+  ip_loc string
+);
+
+CREATE TAG IF NOT EXISTS identity_no(
+  deprecated bool DEFAULT false,
+  merged_into string DEFAULT "",
+  resolution_method string DEFAULT "deterministic"
+);
+
+CREATE TAG IF NOT EXISTS email(value string);
+CREATE TAG IF NOT EXISTS phone(value string);
+CREATE TAG IF NOT EXISTS maid(value string);
+
+CREATE TAG IF NOT EXISTS country(code string);
+CREATE TAG IF NOT EXISTS merchant(name string, url string);
+
+CREATE EDGE IF NOT EXISTS has_email();
+CREATE EDGE IF NOT EXISTS has_phone();
+CREATE EDGE IF NOT EXISTS has_maid();
+CREATE EDGE IF NOT EXISTS in_country();
+CREATE EDGE IF NOT EXISTS transacted_with();
+CREATE EDGE IF NOT EXISTS belongs_to(
+  start_date string,
+  end_date string
+);
+CREATE EDGE IF NOT EXISTS probable_match(
+  score double,
+  method string,
+  linked_at string
+);

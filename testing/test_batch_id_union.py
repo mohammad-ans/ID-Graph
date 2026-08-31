@@ -73,20 +73,20 @@ class ClusterIdentifiersTest(unittest.TestCase):
 class RelativeDataInvalidTests(unittest.TestCase):
     def test_small_batch(self):
         rows = [row(f"r{i}", email="a@gmail.com") for i in range(3)]
-        invalid = InvalidIdentifiers()
+        invalid = InvalidIdentifiers(SCHEMA_COLS)
         invalid.invalid_relative_newD(rows)
         self.assertEqual(invalid.invalid_identifiers["email"], {})
 
     def test_identifier_blacklist(self):
         rows = [row(f"r{i}", email="a@gmail.com") for i in range(8)]
-        invalid = InvalidIdentifiers()
+        invalid = InvalidIdentifiers(SCHEMA_COLS)
         invalid.invalid_relative_newD(rows)
         self.assertIn(rows[0].identifiers["email"], invalid.invalid_identifiers["email"])
 
     def test_scaling_invalid_threshold(self):
         rows = [row(f"r{i}", email=f"a{i}@gmail.com") for i in range(200)]
         rows += [row(f"r-{i}", email="a@gmail.com") for i in range(8)]
-        invalid = InvalidIdentifiers()
+        invalid = InvalidIdentifiers(SCHEMA_COLS)
         invalid.invalid_relative_newD(rows)
         self.assertEqual(invalid.invalid_identifiers["email"], {})
 

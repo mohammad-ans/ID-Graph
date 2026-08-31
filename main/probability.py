@@ -276,7 +276,7 @@ def resolve_prolly(rows: list[GraphRow], schema_cols: dict, model = None, classi
     all_scored = []
     for row_a, row_b in candidates:
         features = pair_features(row_a, row_b, schema_cols)
-        score, method = al_score(features, model, classifier)
+        score, method = al_score(features, schema_cols, model, classifier)
         outcome = classify(score, config)
         all_scored.append((row_a.record_id, row_b.record_id, score, features, outcome))
         if outcome == "auto_merge":
@@ -302,7 +302,7 @@ class ReunionCandidate:
 
 def score_guest(row: GraphRow, probable_candidates: list[PoolRow], schema_cols: dict, model: FellegiSunterModel | None = None):
     if model is None:
-        model = FellegiSunterModel.schema_mu_probs()
+        model = FellegiSunterModel.schema_mu_probs(schema_cols)
     config = parse_config(schema_cols)
     identity_recScore: dict[str, list[tuple[str, float]]] = {}
     for candidate in probable_candidates:

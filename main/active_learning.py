@@ -30,8 +30,8 @@ class LogisticClassifier:
     total_trained: int
     field_names: tuple[str, ...]
 
-    def predict_prolly(self, features: dict):
-        x = features_arr(features)
+    def predict_prolly(self, features: dict, field_names):
+        x = features_arr(features, field_names)
         z = float(numpy.dot(self.weights, x) + self.bias)
         z = max(min(z, 35.0), -35.0)
         return 1.0 / (1.0 + math.exp(-z))
@@ -57,9 +57,9 @@ def logistic_regression(labeled: list[tuple[dict, int]], field_names, l2: float 
         bias -= learning_rate * grad_b
     return LogisticClassifier(weights=weights, bias=bias, total_trained=len(labeled), field_names=field_names)
 
-def score(features: dict, fs_model, classifier: LogisticClassifier | None):
+def score(features: dict, schema_cols, fs_model, classifier: LogisticClassifier | None):
     if classifier is not None:
-        return classifier.predict_prolly(features), "learned_classifier"
+        return classifier.predict_prolly(features, _field_names(schema_cols)), "learned_classifier"
     return fs_model.score(features), "fellegi_sunter"
 
 def fetch_review_queue(conn, schema_name: str, review_table: str = "identity_review_queue", limit: int = 20):

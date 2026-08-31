@@ -7,7 +7,7 @@ MAIN_DIR = Path(__file__).resolve().parent.parent / "main"
 sys.path.insert(0, str(MAIN_DIR))
 from graph_model import GraphRow
 from probability import FellegiSunterModel, resolve_prolly, pair_features
-from active_learning import FEATURES, logistic_regression
+from active_learning import FEATURES, logistic_regression, _field_names
 
 
 def load_schema_cols():
@@ -24,6 +24,7 @@ class ResolveProllyIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.schema_cols = load_schema_cols()
         self.model = FellegiSunterModel()
+        self.field_names = _field_names(self.schema_cols)
         self.rows = [build_row("r1", "2026-01-01T00:00:00", "New York", "1440", "900", "us", "Austin", "en-US"),
                      build_row("r2", "2026-01-01T00:00:00", "New York", "1440", "900", "us", "Austin", "en-US")]
 
@@ -37,7 +38,7 @@ class ResolveProllyIntegrationTests(unittest.TestCase):
     def test_uses_classifier_score(self):
         agree_all = {name: True for name in FEATURES}
         agree_none = {name: False for name in FEATURES}
-        classifier = logistic_regression([(agree_all, 1), (agree_none, 0)] * 10)
+        classifier = logistic_regression([(agree_all, 1), (agree_none, 0)] * 10, field_names=self.field_names)
         result1 = resolve_prolly(self.rows, self.schema_cols, self.model, classifier=None)
         result2 = resolve_prolly(self.rows, self.schema_cols, self.model, classifier=classifier)
         _, score1 = result1.auto_merge_groups[0]
@@ -53,7 +54,7 @@ class ResolveProllyIntegrationTests(unittest.TestCase):
         for _ in range(1):
             labeled.append(({"ip_country": True, "city": True, "language": True, "merchant_name": True, "temporal_same_day": True}, 1))
             labeled.append(({"ip_country": False, "city": False, "language": False, "merchant_name": False}, 0))
-        classifier = logistic_regression(labeled)
+        classifier = logistic_regression(labeled, field_names=self.field_names)
         result_classifier = resolve_prolly(rows, self.schema_cols, self.model, classifier=classifier)
         fs_bucket  = "reject"
         if result_fs.auto_merge_groups:

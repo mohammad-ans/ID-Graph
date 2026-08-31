@@ -375,8 +375,8 @@ def insert_candidate_history(conn: _T_conn, scored: list[tuple], schema_name: st
 
 def fetch_candidate_features(conn: _T_conn, schema_name: str, history_table: str = "fellegi_sunter_candidate_history", limit: int = 5000):
     with conn.cursor() as cur:
-        cur.execute(f"SELECT features FROM {schema_name}.{history_table} ORDER_BY scored_at DESC LIMIT %s", (limit, ))
-    return [row[0] for row in cur.fetchall()]
+        cur.execute(f"SELECT features FROM {schema_name}.{history_table} ORDER BY scored_at DESC LIMIT %s", (limit, ))
+        return [row[0] for row in cur.fetchall()]
 
 def count_candidates_history(conn: _T_conn, schema_name: str, history_table: str = "fellegi_sunter_candidate_history"):
     with conn.cursor() as cur:

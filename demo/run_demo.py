@@ -348,7 +348,7 @@ def main():
         print("\nScoring the still undecided bordeline pair now")
         features = pair_features(rows["borderline-a"], rows["borderline-b"], SCHEMA_COLS)
         fellegi_score = model.score(features)
-        score, method = al.score(features, model, classifier)
+        score, method = al.score(features, schema_cols, model, classifier)
         print(f" If using the Fellegi Sunter, score is {fellegi_score:.4f} ")
         print(f" If using the active learning, score is {score:.4f} with method={method}")
         print(f"\nUncertainity ordered queue after decisions")

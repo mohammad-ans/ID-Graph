@@ -50,12 +50,12 @@ probabilistic:
   - review_threshold: 0.8
   - active_learning_min_labels: 15
   - fields:
-    - screen_width: {m: 0.85, u: 0.15}
-    - screen_length: {m: 0.85, u: 0.15}
-    - ip_country: {m: 0.9, u: 0.35}
-    - city: {m: 0.75, u: 0.08}
-    - language: {m: 0.9, u: 0.45}
-    - temporal_same_day: {m: 0.5, u: 0.03}
-    - temporal_same_week: {m: 0.7, u: 0.12}
-    - temporal_same_month: {m: 0.85, u: 0.35}
-    - merchant_name: {m: 0.4, u: 0.15}
+      screen_width: {m: 0.85, u: 0.15}
+      screen_length: {m: 0.85, u: 0.15}
+      ip_country: {m: 0.9, u: 0.35}
+      city: {m: 0.75, u: 0.08}
+      language: {m: 0.9, u: 0.45}
+      temporal_same_day: {m: 0.5, u: 0.03}
+      temporal_same_week: {m: 0.7, u: 0.12}
+      temporal_same_month: {m: 0.85, u: 0.35}
+      merchant_name: {m: 0.4, u: 0.15}
