@@ -4,46 +4,56 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "identityresolver"
-version = "0.1.0"
-description = "An identity resolver over data by using an audience identity graph sync, uses(deterministic + probabilistic idnetity resolution over Nebula Graph)
+version = "0.2.0"
+description = "Deterministic and probabilistic identity resolution over Nebula Graph"
 readme = "README.md"
-requires-python = ">=3.1.0"
-license = {text = "MIT"}
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
-    {name = "M. Ans", email="ansmuhammad340@gmail.com"}
+    {name = "M. Ans", email = "ansmuhammad340@gmail.com"},
 ]
-keywords = ["identity-resolution", "nebula-graph", "identity-graph", "audience-graph"]
+keywords = ["identity-resolution", "nebula-graph", "identity-graph", "audience-graph", "record-linkage"]
 classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Operating System :: OS Independent",
-    "License :: OSI Approved :: MIT License",
+    "Topic :: Database",
+    "Topic :: Scientific/Engineering :: Information Analysis",
 ]
 dependencies = [
     "psycopg2-binary>=2.9",
     "PyYAML>=6.0",
     "nebula3-python>=3.4",
     "numpy>=1.24",
+    "typer>=0.12",
 ]
- 
+
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
+    "build>=1.0",
+    "twine>=5.0",
 ]
 
 [project.urls]
-HomePage = "https://github.com/mohammad-ans/ID-Graph"
+Homepage = "https://github.com/mohammad-ans/ID-Graph"
 Repository = "https://github.com/mohammad-ans/ID-Graph"
- 
+Issues = "https://github.com/mohammad-ans/ID-Graph/issues"
+
 [project.scripts]
-identityresolver-sync = "identityresolver.sync_audience_graph:main"
-identityresolver-apply-schema = "identityresolver.apply_schema:main"
-identityresolver-review = "identityresolver.review:main"
+identityresolver = "identityresolver.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-identityresolver = ["*.yaml", "*.ngql"]
+"identityresolver.presets" = ["*.yaml", "*.ngql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
