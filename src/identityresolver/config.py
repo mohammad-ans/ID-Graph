@@ -53,7 +53,14 @@ class PostgresConfig:
         )
     def merged(self, **overrides):
         return replace(self, **{k: v for k, v in overrides.items() if v is not None})
-
+    @classmethod
+    def from_url(cls, url: str) -> "PostgresConfig":
+        parsed = urlparse(url)
+        if parsed.scheme not in {"postgres", "postgresql"}:
+            raise ConfigError(f"Not a Postgres URL: {url!r}")
+        if not parsed.path.lstrip("/"):
+            raise ConfigError(f"Postgres URL is missing a database name: {url!r}")
+        return cls(host=parsed.hostname or "127.0.0.1", port=parsed.port or 5432, dbname=parsed.path.lstrip("/"), user=unquote(parsed.username) if parsed.username else "postgres", password=unquote(parsed.password) if parsed.password else "")
 
 @dataclass(frozen=True)
 class NebulaConfig:
