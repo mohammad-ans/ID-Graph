@@ -261,7 +261,7 @@ class ProbabilisticLinking:
 
 def resolve_prolly(rows: list[GraphRow], schema_cols: dict, model = None, classifier: LogisticClassifier | None = None, pool_rows: list[PoolRow] | None = None):
     if model is None:
-        model = FellegiSunterModel.schema_mu_probs()
+        model = FellegiSunterModel.schema_mu_probs(schema_cols)
     config = parse_config(schema_cols)
     am_pairs = []
     review_pairs = []

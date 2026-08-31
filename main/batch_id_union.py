@@ -9,7 +9,6 @@ logger = getLogger(__name__)
 
 
 class InvalidIdentifiers:
-    invalid_identifiers : dict[str, dict[str, int]]
     def __init__(self, schema_cols):
         self.invalid_identifiers = {}
         for identifier in schema_cols["identifiers"]:
