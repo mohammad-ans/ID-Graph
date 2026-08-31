@@ -1,101 +1,92 @@
-from pathlib import Path
-import yaml, os, sys, argparse
-import active_learning
-from .sync_audience_graph import connect_postgres
-from .config import PostgresConfig
+from __future__ import annotations
 
-SCHEMA_PATH = Path(__file__).with_name("cschema.yaml")
+import logging
+from typing import Callable
 
-def load_schema():
-    with open(SCHEMA_PATH) as file:
-        return yaml.safe_load(file)
+from . import active_learning
+from .schema import record_id_column, signal_columns
 
-def display_columns(schema_cols: dict):
-    cols = list(schema_cols.get("passthrough", []))
-    for group in schema_cols.get("signal_groups", []):
-        cols += group["columns"]
-    return cols
+logger = logging.getLogger(__name__)
 
-def fetch_record_details(conn, record_ids: list[str], schema_cols: dict, schema_name: str, sync_table: str):
+__all__ = ["review_candidates", "display_columns", "format_record", "prompt_decision"]
+
+
+def display_columns(schema_cols: dict) -> list[str]:
+    """Columns worth showing a reviewer when they compare two records."""
+    return list(schema_cols.get("passthrough", []) or []) + signal_columns(schema_cols)
+
+
+def fetch_record_details(
+    conn, record_ids: list[str], schema_cols: dict, schema_name: str, source_table: str
+) -> dict[str, dict]:
     if not record_ids:
         return {}
-    row = []
-    record_id_col = schema_cols["record_id"][0]
-    columns = [record_id_col] + display_columns(schema_cols)
+    id_column = record_id_column(schema_cols)
+    columns = [id_column] + display_columns(schema_cols)
+    quoted = ", ".join(f'"{column}"' for column in columns)
     with conn.cursor() as cur:
-        cur.execute(f"""
-            SELECT {', '.join(columns)}
-            FROM {schema_name}.{sync_table}
-            WHERE {record_id_col} = ANY(%s)
-        """, (record_ids, ))
+        cur.execute(
+            f"SELECT {quoted} FROM {schema_name}.{source_table} WHERE {id_column} = ANY(%s)",
+            (record_ids,),
+        )
         rows = cur.fetchall()
     return {row[0]: dict(zip(columns, row)) for row in rows}
 
-def format_record(id: str, details: dict | None, schema_cols: dict):
-    if details is None:
-        return f"  {id}: No details for this record found"
-    return f"  {id} {' '.join(f'{c}={details.get(c)!r}' for c in display_columns(schema_cols))}"
 
-def decide(score: float, features: dict):
-    print(f"\n current score{score:.4f} agreement features={features}")
+def format_record(record_id: str, details: dict | None, schema_cols: dict) -> str:
+    if details is None:
+        return f"  {record_id}: no details found for this record"
+    fields = " ".join(f"{c}={details.get(c)!r}" for c in display_columns(schema_cols))
+    return f"  {record_id} {fields}"
+
+
+def prompt_decision(score: float, features: dict) -> str:
+    """Ask a terminal user to judge one pair. Returns match/not_match/skip/quit."""
+    print(f"\nscore={score:.4f} agreement features={features}")
     while True:
         choice = input(" match / not match / skip / quit > ").strip().lower()
-        match choice:
-            case "match" | "m":
-                return "match"
-            case "n" | "not match":
-                return "not_match"
-            case "s" | "skip":
-                return "skip"
-            case "q" | "quit":
-                return "quit"
-            case _:
-                print("Valid choices are m, n, s, q  and  match, non match, skip, quit")
+        if choice in {"m", "match"}:
+            return "match"
+        if choice in {"n", "not match", "not_match"}:
+            return "not_match"
+        if choice in {"s", "skip"}:
+            return "skip"
+        if choice in {"q", "quit"}:
+            return "quit"
+        print("Valid choices: m/match, n/not match, s/skip, q/quit")
 
-def record_decisions(conn, schema_cols: dict, schema_name: str, sync_table: str, review_table: str = "identity_review_queue", limit: int = 10):
+
+def review_candidates(conn, schema_cols: dict, schema_name: str, source_table: str, review_table: str = "identity_review_queue", limit: int = 10, decider: Callable[[float, dict], str] = prompt_decision, output: Callable[[str], None] = print,) -> int:
     candidates = active_learning.fetch_review_queue(conn, schema_name, review_table, limit)
     if not candidates:
-        print("Review queue is empty so nothing to review yet")
-    record_ids = sorted({record_id for a, b, _, _ in candidates for record_id in (a, b)})
-    details = fetch_record_details(conn, record_ids, schema_cols, schema_name, sync_table)
+        output("Review queue is empty, nothing to review yet")
+        return 0
+
+    record_ids = sorted({rid for a, b, _, _ in candidates for rid in (a, b)})
+    details = fetch_record_details(conn, record_ids, schema_cols, schema_name, source_table)
+
     total = 0
     for record_a, record_b, score, features in candidates:
-        print("\n" + "=" * 72)
-        print(format_record(record_a, details.get(record_a), schema_cols))
-        print(format_record(record_b, details.get(record_b), schema_cols))
-        decision = decide(score, features)
+        output("\n" + "=" * 72)
+        output(format_record(record_a, details.get(record_a), schema_cols))
+        output(format_record(record_b, details.get(record_b), schema_cols))
+        decision = decider(score, features)
         if decision == "quit":
-            print("Stopped reviewing records")
+            output("Stopped reviewing")
             break
         if decision == "skip":
             continue
-        active_learning.record_review(conn, record_a, record_b, decision, schema_name, review_table)
+        active_learning.record_review(
+            conn, record_a, record_b, decision, schema_name, review_table
+        )
         total += 1
-        print(f"Recorded review {decision}")
-        
+        output(f"Recorded review: {decision}")
+
     if total:
         classifier = active_learning.maybe_fit(conn, schema_cols, schema_name, review_table)
         if classifier is not None:
-            print(f"\nActive learning classifer was trained on {classifier.total_trained} labels. New review candidates will be scored with it now")
-
+            output(
+                f"\nActive learning classifier trained on {classifier.total_trained} labels. "
+                "New review candidates will be scored with it."
+            )
     return total
-
-def main():
-    parser = argparse.ArgumentParser(description="Review candidate from the database review queue here and give them labels")
-    parser.add_argument("--limit", type=int, default=10, help="Number of candidates to review")
-    parser.add_argument("--schema-name", default=None, help="Database schema name")
-    parser.add_argument("--sync-table", default=None, help="Sync table, the audit table to keep track of records processed")
-    parser.add_argument("--review-table", default="identity_review_queue")
-    args = parser.parse_args()
-    schema_name = args.schema_name or os.environ.get("GRAPH_SYNC_NAME")
-    sync_table = args.sync_table or os.environ.get("GRAPH_SYNC_TABLE")
-    if not schema_name or sync_table:
-        print("Cannot access records details without schema name and name of sync table")
-        sys.exit(1)
-    schema_cols = load_schema()
-    with connect_postgres(PostgresConfig.from_env()) as conn:
-        total = record_decisions(conn, schema_cols, schema_name, sync_table, args.review_table, args.limit)
-        print(f"\n\nRecorded total of {total} decisions")
-
-if __name__ == "__main__":
-    main()

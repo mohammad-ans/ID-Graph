@@ -1,24 +1,13 @@
+from __future__ import annotations
+import json
 import logging
 import math
-import numpy
 from dataclasses import dataclass
-import json
+import numpy
+from .schema import feature_names as _field_names
+from .schema import probabilistic_config as parse_config
 
-logger = logging.getLogger()
-
-FEATURES = ("screen_width", "screen_length", "ip_country", "city", "language", "temporal_same_day", "temporal_same_week", "temporal_same_month", "merchant_name")
-
-def _field_names(schema_cols):
-    names = set(FEATURES)
-    for item in schema_cols.get("probabilistic", []) or []:
-        names.update(item.get("fields", {}).keys())
-    return tuple(sorted(names))
-
-def parse_config(schema_cols: dict):
-    out = {}
-    for el in schema_cols.get("probabilistic", []) or []:
-        out.update(el)
-    return out
+logger = logging.getLogger(__name__)
 
 def features_arr(features, field_names):
     return numpy.array([1.0 if features.get(name) else 0.0 for name in field_names], dtype=float)
@@ -30,8 +19,10 @@ class LogisticClassifier:
     total_trained: int
     field_names: tuple[str, ...]
 
-    def predict_prolly(self, features: dict, field_names):
-        x = features_arr(features, field_names)
+    def predict_prolly(self, features: dict, field_names=None):
+        if field_names is not None and tuple(field_names) != tuple(self.field_names):
+            raise ValueError(f"This classifier was fitted on features {list(self.field_names)} but was asked to score {list(field_names)}. Refit it against the current schema.")
+        x = features_arr(features, self.field_names)
         z = float(numpy.dot(self.weights, x) + self.bias)
         z = max(min(z, 35.0), -35.0)
         return 1.0 / (1.0 + math.exp(-z))
@@ -59,7 +50,7 @@ def logistic_regression(labeled: list[tuple[dict, int]], field_names, l2: float 
 
 def score(features: dict, schema_cols, fs_model, classifier: LogisticClassifier | None):
     if classifier is not None:
-        return classifier.predict_prolly(features, _field_names(schema_cols)), "learned_classifier"
+        return classifier.predict_prolly(features), "learned_classifier"
     return fs_model.score(features), "fellegi_sunter"
 
 def fetch_review_queue(conn, schema_name: str, review_table: str = "identity_review_queue", limit: int = 20):
@@ -92,7 +83,7 @@ def fetch_labeled(conn, schema_name: str, review_table: str = "identity_review_q
 def maybe_fit(conn, schema_cols: dict, schema_name: str, review_table: str = "identity_review_queue"):
     config = parse_config(schema_cols)
     field_names = _field_names(schema_cols)
-    min_labels = config["active_learning_min_labels"]
+    min_labels = int(config.get("active_learning_min_labels", 15))
     labeled = fetch_labeled(conn, schema_name, review_table)
     matches = [pair for pair in labeled if pair[1] == 1]
     non_match = [pair for pair in labeled if pair[1] == 0]

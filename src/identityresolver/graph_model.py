@@ -5,12 +5,10 @@ import re
 from dataclasses import dataclass, field
 import datetime
 from decimal import Decimal
-from typing import Iterable, TYPE_CHECKING
 from .nebula_client import NebulaClient
 from .cluster_union_strict import cluster_identifiers_strict
+from .schema import DEFAULT_PHONE_GAP_DAYS, field_role_column, phone_gap_days
 
-if TYPE_CHECKING:
-    from supernode import SupernodeAnomalyScorer
 
 _VID_SAFE_RE = re.compile(r"[^A-Za-z0-9_.:@|-]+")
 _LOC_SAFE_RE = r"[^a-z0-9]+"
@@ -20,7 +18,8 @@ _DEVICE_SENTINELS = frozenset({
     "00000000-0000-0000-0000-000000000000",
     "00000000000000000000000000000000",
 })
-MAX_GAP_PHONE = 720
+
+MAX_GAP_PHONE = DEFAULT_PHONE_GAP_DAYS
 
 def clean_text(value) -> str | None:
     if value is None:
@@ -76,10 +75,6 @@ def vid(prefix: str, value: str) -> str:
 def record_vid(table_name: str, record_id: str) -> str:
     return vid("record", f"{normalize_token(table_name)}:{record_id}")
 
-def field_role_column(schema_cols, role):
-    field_roles = schema_cols.get("field_roles", {}).get(role)
-    return field_roles["column"] if field_roles else None
-
 def get_role(row: GraphRow, schema_cols, role):
     field_roles = schema_cols.get("field_roles", {}).get(role)
     if field_roles is None:
@@ -89,7 +84,7 @@ def get_role(row: GraphRow, schema_cols, role):
     if source == "attributes":
         return row.attributes.get(column)
     elif source == "raw_signals":
-        return row.attributes.get(column)
+        return row.raw_signals.get(column)
     return None
 
 def process_user_agent(user_agent : str):
@@ -303,7 +298,7 @@ def check_phone_gap(phone : str, p_date : datetime.datetime, nebula: NebulaClien
         if not dates:
             return False
         date = max(dates)
-        return abs(date - p_date).days < MAX_GAP_PHONE
+        return abs(date - p_date).days < phone_gap_days(schema_cols)
         
         
     except Exception:
@@ -464,7 +459,7 @@ def remap_identifiers_strict(identity_vid : str, nebula : NebulaClient, remap_ty
 
     return statements, invalid_identifiers_declare, db_statements
                 
-def rows_to_ngql(rows: Iterable[GraphRow]) -> str:
+def rows_to_ngql(rows) -> str:
     statements: list[str] = []
     for row in rows:
         statements.extend(row_to_ngql(row))

@@ -1,29 +1,12 @@
 from __future__ import annotations
+import logging
 import math
 from dataclasses import dataclass, field as dc_field
 from datetime import datetime
 import numpy
 from .graph_model import GraphRow, record_vid, update_vertex, get_role
 from .active_learning import LogisticClassifier, score as al_score
-
-TIME_SLOTS = (("temporal_same_day", 1), ("temporal_same_week", 7), ("temporal_same_month", 30))
-
-def parse_config(schema_cols: dict) -> dict:
-    out = {"auto_merge_threshold": 0.9, "review_threshold": 0.8}
-    for item in schema_cols.get("probabilistic", []):
-        out.update(item)
-    return out
-
-def prolly_enabled(schema_cols: dict):
-    for item in schema_cols.get("resolver", []):
-        if "probabilistic" in item:
-            return bool(item["probabilistic"])
-
-def signal_columns(schema_cols: dict) -> list[str]:
-    cols = []
-    for group in schema_cols["signal_groups"]:
-        cols.extend(group["columns"])
-    return cols
+from .schema import TIME_SLOTS, feature_names, field_role_column, probabilistic_config as parse_config, prolly_enabled, signal_columns
 
 def parse_date(value: str | None) -> datetime | None:
     if not value:
@@ -38,28 +21,38 @@ def pair_features(row_a: GraphRow, row_b: GraphRow, schema_cols: dict) -> dict[s
     for col in signal_columns(schema_cols):
         a, b = row_a.raw_signals.get(col), row_b.raw_signals.get(col)
         features[col] = a is not None and a == b
-    date_a = parse_date(row_a.attributes.get("transaction_date"))
-    date_b = parse_date(row_b.attributes.get("transaction_date"))
-    gap_days = None
-    if date_a and date_b:
-        gap_days = abs((date_a - date_b).days)
-    for name, window in TIME_SLOTS:
+    if field_role_column(schema_cols, "temporal"):
+        date_a = parse_date(get_role(row_a, schema_cols, "temporal"))
+        date_b = parse_date(get_role(row_b, schema_cols, "temporal"))
+        gap_days = None
+        if date_a and date_b:
+            gap_days = abs((date_a - date_b).days)
+        for name, window in TIME_SLOTS:
             features[name] = gap_days is not None and gap_days <= window
-    merchant_a = row_a.attributes.get("merchant_name")
-    merchant_b = row_b.attributes.get("merchant_name")
-    features["merchant_name"] = merchant_a is not None and merchant_a == merchant_b
+
+    behavioral = field_role_column(schema_cols, "behavioral")
+    if behavioral:
+        value_a = get_role(row_a, schema_cols, "behavioral")
+        value_b = get_role(row_b, schema_cols, "behavioral")
+        features[behavioral] = value_a is not None and value_a == value_b
+
     return features
 
 
-FIELD_ORDER = ["screen_width", "screen_length", "ip_country", "city", "language", "temporal_same_day", "temporal_same_week", "temporal_same_month", "merchant_name"]
-PRIORS = {"screen_width": (0.85, 0.15), "screen_length" : (0.85, 0.15), "ip_country" : (0.9, 0.35), "city": (0.75, 0.08), "language": (0.9, 0.45), "temporal_same_day": (0.5, 0.03), "temporal_same_week": (0.7, 0.12), "temporal_same_month": (0.85, 0.35), "merchant_name": (0.4, 0.15)}
+logger = logging.getLogger(__name__)
+
 DEFAULT_PROBABILITY = 0.05
+DEFAULT_MU = (0.6, 0.2)
+
+
+def field_order(schema_cols) -> list[str]:
+    return list(feature_names(schema_cols))
+
 
 def build_priors(schema_cols):
-    priors = dict(PRIORS)
-    for item in schema_cols.get("probabilistic", []):
-        for name, val in item.get("fields", {}).items():
-            priors[name] = (float(val["m"]), float(val["u"]))
+    priors = {name: DEFAULT_MU for name in feature_names(schema_cols)}
+    for name, val in (parse_config(schema_cols).get("fields") or {}).items():
+        priors[name] = (float(val["m"]), float(val["u"]))
     return priors
 
 def stable_sigmoid(x):
@@ -71,8 +64,8 @@ def stable_sigmoid(x):
 
 @dataclass
 class FellegiSunterModel:
-    m_probs: dict[str, float] = dc_field(default_factory=lambda: {k: v[0] for k, v in PRIORS.items()})
-    u_probs: dict[str, float] = dc_field(default_factory=lambda: {k: v[1] for k, v in PRIORS.items()})
+    m_probs: dict[str, float] = dc_field(default_factory=dict)
+    u_probs: dict[str, float] = dc_field(default_factory=dict)
     prior_match_prolly: float = DEFAULT_PROBABILITY
 
     @classmethod
@@ -85,6 +78,14 @@ class FellegiSunterModel:
         )
     
     def score(self, features: dict[str, bool]):
+        if not self.m_probs or not self.u_probs:
+            raise ValueError("FellegiSunterModel has no probabilities, so every pair would score at the prior. Use FellegiSunterModel.schema_mu_probs(schema_cols), load a fitted model with from_dict(), or call fit_em() first.")
+
+        unknown = [name for name in features if name not in self.m_probs]
+        if unknown:
+            logger.warning("Scoring features the model has no probabilities for, they will not affect the score: %s. Declare them under probabilistic.fields in the column schema, or refit the model.",
+                ", ".join(sorted(unknown)))
+
         log_lr = 0.0
         for fname, agree in features.items():
             m = min(max(self.m_probs.get(fname, 0.5), 1e-6), 1 - 1e-6)

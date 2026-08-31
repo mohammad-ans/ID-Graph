@@ -1,17 +1,21 @@
 from __future__ import annotations
-import logging, sys, time
+
+import logging
+import time
+
 from .config import NebulaConfig
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
+
+__all__ = ["initialize_nebula"]
 
 
 CONNECT_RETRY_SECONDS = 5
 CONNECT_MAX_ATTEMPTS = 24
 HOST_ONLINE_RETRY_SECONDS = 3
 HOST_ONLINE_MAX_ATTEMPTS = 40
-STORAGE_HOST = "storaged"
-STORAGE_PORT = 9779
+DEFAULT_STORAGE_HOST = "storaged"
+DEFAULT_STORAGE_PORT = 9779
 
 def connect_retry(config: NebulaConfig):
     from nebula3.Config import Config
@@ -30,17 +34,17 @@ def connect_retry(config: NebulaConfig):
         time.sleep(CONNECT_RETRY_SECONDS)
     raise RuntimeError(f"Could not connect to nebula graphd at {config.host}:{config.port} after {CONNECT_MAX_ATTEMPTS} attempts")
 
-def add_storage_host(session):
-    result = session.execute(f'ADD HOSTS "{STORAGE_HOST}":{STORAGE_PORT};')
+def add_storage_host(session, storage_host: str, storage_port: int):
+    result = session.execute(f'ADD HOSTS "{storage_host}":{storage_port};')
     if result.is_succeeded():
-        logger.info("Registered storage host: %s:%s", STORAGE_HOST, STORAGE_PORT)
+        logger.info("Registered storage host: %s:%s", storage_host, storage_port)
     msg = result.error_msg() or ""
     if "existed" in msg.lower():
-        logger.info("Storage host %s:%s was already registered", STORAGE_HOST, STORAGE_PORT)
+        logger.info("Storage host %s:%s was already registered", storage_host, storage_port)
         return
     raise RuntimeError(f"Add host failed: {msg}")
 
-def wait_for_host(session):
+def wait_for_host(session, storage_host: str, storage_port: int):
     for attempt in range(1, HOST_ONLINE_MAX_ATTEMPTS + 1):
         result = session.execute("SHOW HOSTS;")
         if not result.is_succeeded():
@@ -48,32 +52,33 @@ def wait_for_host(session):
         for i in range(result.row_size()):
             row = [v.cast() for v in result.row_values(i)]
             host, port, status = row[0], row[1], row[2]
-            if str(host) == STORAGE_HOST and int(port) == STORAGE_PORT:
+            if str(host) == storage_host and int(port) == storage_port:
                 if str(status).upper() == "ONLINE":
-                    logger.info("Storage host %s:%s is ONLINE", STORAGE_HOST, STORAGE_PORT)
+                    logger.info("Storage host %s:%s is ONLINE", storage_host, storage_port)
                     return
-                logger.info("Storage host %s:%s status=%s (attempt %s / %s). Waiting %ss", STORAGE_HOST, STORAGE_PORT, status, attempt, HOST_ONLINE_MAX_ATTEMPTS, HOST_ONLINE_RETRY_SECONDS)
+                logger.info("Storage host %s:%s status=%s (attempt %s / %s). Waiting %ss", storage_host, storage_port, status, attempt, HOST_ONLINE_MAX_ATTEMPTS, HOST_ONLINE_RETRY_SECONDS)
                 break
         else:
-            logger.info("Storage host %s:%s not listed yet by SHOW HOSTS (attempt %s / %s). Waiting%ss", STORAGE_HOST, STORAGE_PORT, attempt, HOST_ONLINE_MAX_ATTEMPTS, HOST_ONLINE_RETRY_SECONDS)
+            logger.info("Storage host %s:%s not listed yet by SHOW HOSTS (attempt %s / %s). Waiting%ss", storage_host, storage_port, attempt, HOST_ONLINE_MAX_ATTEMPTS, HOST_ONLINE_RETRY_SECONDS)
         time.sleep(HOST_ONLINE_RETRY_SECONDS)
     raise RuntimeError(f"Storage host {STORAGE_HOST}:{STORAGE_PORT} did not report ONLINE after {HOST_ONLINE_MAX_ATTEMPTS} attempts. Check logs for errors.")
 
-def main():
-    config = NebulaConfig.from_env()
+def initialize_nebula(
+    config: NebulaConfig,
+    storage_host: str = DEFAULT_STORAGE_HOST,
+    storage_port: int = DEFAULT_STORAGE_PORT,
+) -> None:
+    """Register the storage host and block until it reports ONLINE.
+
+    The storage host defaults to the ``storaged`` service name from the bundled
+    docker-compose file; pass your own when running against a real cluster.
+    """
     pool = connect_retry(config)
     session = pool.get_session(config.username, config.password)
     try:
-        add_storage_host(session)
-        wait_for_host(session)
-        logger.info("Nebula cluster initialization complete. Now schema files can be ran on it")
+        add_storage_host(session, storage_host, storage_port)
+        wait_for_host(session, storage_host, storage_port)
+        logger.info("Nebula cluster initialization complete; the schema can now be applied")
     finally:
         session.release()
         pool.close()
-
-if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        logger.error("Initializing nebula failed: %s", e)
-        sys.exit(1)

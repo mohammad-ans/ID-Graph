@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 import yaml
 
-__all__ = ["SchemaError", "load_schema", "validate_schema", "souce_columns", "signal_columns", "identifier_names", "merge_identifier_names", "feature_names", "field_role", "probabilistic_config", "probabilistic_enabled", "phone_gap_days", "TIME_SLOTS"]
+__all__ = ["SchemaError", "load_schema", "validate_schema", "souce_columns", "signal_columns", "identifier_names", "merge_identifier_names", "feature_names", "field_role", "probabilistic_config", "prolly_enabled", "phone_gap_days", "TIME_SLOTS"]
 TIME_SLOTS = (
     ("temporal_same_day", 1),
     ("temporal_same_week", 7),
@@ -60,7 +60,7 @@ def validate_schema(schema_cols):
             )
         check_column(spec.get("column", ""))
 
-    if probabilistic_enabled(schema_cols):
+    if prolly_enabled(schema_cols):
         config = probabilistic_config(schema_cols)
         for key in ("auto_merge_threshold", "review_threshold"):
             if key in config and not 0.0 <= float(config[key]) <= 1.0:
@@ -131,3 +131,7 @@ def features_names(schema_cols):
         names.add(behavioral)
     names.update((probabilistic_config(schema_cols).get("fields") or {}).keys())
     return tuple(sorted(names))
+
+def phone_gap_days(schema_cols):
+    rules = schema_cols.get("rules") or {}
+    return int(rules.get("phone_gap_days", DEFAULT_PHONE_GAP_DAYS))
