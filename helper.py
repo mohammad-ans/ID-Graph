@@ -2,14 +2,18 @@ import yaml
 from collections import defaultdict
 import hashlib
 # FEATURES = ("screen_width", "screen_length", "ip_country", "city", "language", "temporal_same_day", "temporal_same_week", "temporal_same_month", "merchant_name")
-# with open("cschema.yaml") as file:
-#     data_columns = yaml.safe_load(file)
-    
+with open("./main/cschema.yaml") as file:
+    data_columns = yaml.safe_load(file)
+    allowed_merging = set()
+    identifiers_conf = data_columns["identifiers"]
+    for identifier_conf in identifiers_conf:
+        if identifier_conf["include_in_belongs_to"]:
+            allowed_merging.add(identifier_conf["name"])
+    print(allowed_merging)
 #     names = set(FEATURES)
 #     for item in data_columns.get("probabilistic", []) or []:
 #         names.update(item.get("fields", {}).keys())
 #     print(tuple(sorted(names)))
-print(hashlib.sha256("deborah09@hall.net".strip().lower().encode("utf-8")).hexdigest() == hashlib.sha256("deborah09@hall.net".strip().lower().encode("utf-8")).hexdigest())
 #     temp = list(data_columns["passthrough"])
 #     temp.extend(element["column"] for element in data_columns["identifiers"])
 #     # for element in data_columns["signal_groups"]:

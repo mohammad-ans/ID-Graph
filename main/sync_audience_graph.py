@@ -419,13 +419,17 @@ def save_model(conn: _T_conn, model, history_rows_used: int, schema_name: str, p
     conn.commit()
 
 def insert_invalid_identifiers(conn : _T_conn, identifiers: list[tuple], schema_name : str, invalid_table : str = "graph_invalid_identifiers"):
+    if not identifiers:
+        return
     with conn.cursor() as cur:
+        sql_part = ", ".join("(%s, %s)" for _ in identifiers)
+        params = [val for identifier in identifiers for val in identifier]
         cur.execute(
             f"""
                 INSERT INTO {schema_name}.{invalid_table} (identifier_type, identifier)
-                VALUES {", ".join(f"(%s, %s)" for _ in identifiers)}
+                VALUES {sql_part}
                 ON CONFLICT DO NOTHING;
-            """, (", ".join(f"('{identifier[0]}', '{identifier[1]}')" for identifier in identifiers))
+            """, params
         )
     conn.commit()
     logger.info("Invalid identifiers added")
@@ -474,6 +478,7 @@ def fetch_rows(conn : _T_conn, graph_name: str, table_name: str, columns: list[s
         LEFT JOIN {schema_name}.{sync_table} a
           ON a.graph_name = %s
          AND a.standardized_table = %s
+         AND a.source_table = COALESCE(t.source_table, 'unknown')
          AND a.record_id = t.record_id
         WHERE t.record_id IS NOT NULL
           AND a.record_id IS NULL
@@ -660,11 +665,11 @@ def sync_table(
             if not sync_config.phone_gap:
                 transaction_dates = None
             statements, invalid_identifiers_declare, db_statements = belongs_to_identity(identifier_identity_map, clustered_identifiers, transaction_dates, sync_config.max_identifiers, sync_config.remap_type, schema_cols, nebula)
-            
+            logger.info(invalid_identifiers_declare)
             preview_statements = row_to_ngql(batch[0]) if batch else []
             logger.info(
-                "Dry run for %s: would sync %s rows; Example statements:\n%s\n Invalid identifiers: [%s] and data base audit tables statements: [%s]",
-                table_name, len(batch), ";\n".join(preview_statements), ",".join(invalid_identifiers_declare), ";\n".join(db_statements)
+                "Dry run for %s: would sync %s rows; Example statements:\n%s\n Invalid identifiers in strict matching: [%s] and data base audit tables statements: [%s]",
+                table_name, len(batch), ";\n".join(preview_statements), ", ".join(invalid_identifiers_declare), ";\n".join(db_statements)
             )
 
             total += len(batch)

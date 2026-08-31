@@ -157,7 +157,9 @@ def insert_vertex(tags: str | list[str], vertex_id: str, props: dict[str, str] |
         values_grps = []
         for tag in tags:
             columns = ", ".join(props[tag].keys())
-            values_grps.append(f'{ ", ".join(ngql_string(value) for value in props[tag].values()) }')
+            tag_values = ", ".join(ngql_string(value) for value in props[tag].values())
+            if tag_values:
+                values_grps.append(tag_values)
             insert_query += f'`{tag}`({columns}), '
         insert_query = insert_query.strip(", ") + f' VALUES {ngql_string(vertex_id)}:(' + f'{", ".join(values_grps)}'  + ')'
         return insert_query
@@ -202,21 +204,6 @@ def row_to_ngql(row: GraphRow) -> list[str]:
             },
         )
     ]
-
-
-    # country = normalize_token(row.country)
-    # if country:
-    #     country_id = vid("country", country.upper())
-    #     statements.append(insert_vertex("country", country_id, {"code": row.country.upper()}))
-    #     statements.append(insert_edge("in_country", record_id, country_id))
-
-    # merchant = normalize_token(row.merchant_name)
-    # if merchant:
-    #     merchant_id = vid("merchant", merchant)
-    #     statements.append(
-    #         insert_vertex("merchant", merchant_id, {"name": row.merchant_name, "url": row.merchant_url})
-    #     )
-    #     statements.append(insert_edge("transacted_with", record_id, merchant_id))
 
     for id_type, identifier in row.identifiers.items():
         if identifier:
@@ -324,12 +311,14 @@ def check_phone_gap(phone : str, p_date : datetime.datetime, nebula: NebulaClien
 
 def rules(identity_matches : dict[str, list[str]], transaction_dates : dict[str, datetime.datetime] | None, nebula, schema_cols):
     valid_merges = set()
+    allowed_merging = set()
+    identifiers_conf = schema_cols["identifiers"]
+    for identifier_conf in identifiers_conf:
+        if identifier_conf["include_in_belongs_to"]:
+            allowed_merging.add(identifier_conf["name"])
     for identity, identifiers in identity_matches.items():
         for identifier in identifiers:
-            id_type, id_val = identifier_type(identifier)
-            if id_type == "email":
-                valid_merges.add(identity)
-                break
+            id_type, _ = identifier_type(identifier)
             if id_type == "phone":
                 if transaction_dates:
                     date = datetime.datetime.now()
@@ -340,6 +329,10 @@ def rules(identity_matches : dict[str, list[str]], transaction_dates : dict[str,
                         break
                 else:
                     valid_merges.add(identity)
+            else:
+                if id_type in allowed_merging:
+                    valid_merges.add(identity)
+                    break
 
     return valid_merges
             

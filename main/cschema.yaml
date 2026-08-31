@@ -13,6 +13,7 @@ identifiers:
     column: twitter
     pre_hashed: true
     edge_tag: has_twitter
+    include_in_belongs_to: true
   - name: linkedin
     column: linkedin
     pre_hashed: true
