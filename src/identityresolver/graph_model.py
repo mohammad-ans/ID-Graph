@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 import datetime
 from decimal import Decimal
 from typing import Iterable, TYPE_CHECKING
-from nebula_client import NebulaClient
-from cluster_union_strict import cluster_identifiers_strict
+from .nebula_client import NebulaClient
+from .cluster_union_strict import cluster_identifiers_strict
 
 if TYPE_CHECKING:
     from supernode import SupernodeAnomalyScorer

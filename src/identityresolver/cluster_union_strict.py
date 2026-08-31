@@ -1,4 +1,4 @@
-from nebula_client import NebulaClient
+from .nebula_client import NebulaClient
 from collections import defaultdict
 
 class UnionFind:

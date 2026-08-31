@@ -3,8 +3,8 @@ import math
 from dataclasses import dataclass, field as dc_field
 from datetime import datetime
 import numpy
-from graph_model import GraphRow, record_vid, update_vertex, get_role
-from active_learning import LogisticClassifier, score as al_score
+from .graph_model import GraphRow, record_vid, update_vertex, get_role
+from .active_learning import LogisticClassifier, score as al_score
 
 TIME_SLOTS = (("temporal_same_day", 1), ("temporal_same_week", 7), ("temporal_same_month", 30))
 

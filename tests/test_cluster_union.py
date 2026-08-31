@@ -3,7 +3,7 @@ import sys, yaml, hashlib
 import unittest
 from pathlib import Path
 
-MAIN_DIR = Path(__file__).resolve().parent.parent / "main"
+MAIN_DIR = Path(__file__).resolve().parent.parent / "src/identityresolver"
 DEMO_DIR = Path(__file__).resolve().parent.parent / "demo"
 
 sys.path.insert(0, str(MAIN_DIR))

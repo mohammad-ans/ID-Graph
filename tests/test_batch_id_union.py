@@ -3,7 +3,7 @@ import sys, yaml
 import unittest
 from pathlib import Path
 
-MAIN_DIR = Path(__file__).resolve().parent.parent / "main"
+MAIN_DIR = Path(__file__).resolve().parent.parent / "src/identityresolver"
 sys.path.insert(0, str(MAIN_DIR))
 
 from batch_id_union import UnionFind, cluster_identifiers, distinct_identifiers, InvalidIdentifiers, parse_date, valid_identifiers

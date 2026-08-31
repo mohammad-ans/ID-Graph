@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from config import NebulaConfig
+from .config import NebulaConfig
 
 logger = logging.getLogger(__name__)
 

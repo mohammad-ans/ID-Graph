@@ -4,12 +4,10 @@ import logging
 import sys
 from pathlib import Path
 
-MAIN_DIR = Path(__file__).resolve().parent.parent / "main"
+MAIN_DIR = Path(__file__).resolve().parent.parent / "src/identityresolver"
 DEMO_DIR = Path(__file__).resolve().parent
-DEV_DIR = Path(__file__).resolve().parent.parent / "under_dev"
 sys.path.insert(0, str(MAIN_DIR))
 sys.path.insert(0, str(DEMO_DIR))
-sys.path.insert(0, str(DEV_DIR))
 
 import yaml
 from nebula_f import FakeNebulaClient
@@ -54,7 +52,7 @@ def run_batch(nebula, schema_cols, raw_rows, static_invalid, max_identifiers, re
     identifier_identity_map = fetch_identities(all_identifiers, nebula, 2)
     if not phone_gap:
         transaction_dates = None
-    statements, invalid_identifiers_declare, db_statements = belongs_to_identity(identifier_identity_map, clustered, transaction_dates, max_identifiers, remap_type, schema_cols, nebula, scorer)
+    statements, invalid_identifiers_declare, db_statements = belongs_to_identity(identifier_identity_map, clustered, transaction_dates, max_identifiers, remap_type, schema_cols, nebula)
     prob_result = None
     if unresolvable and prolly_enabled(schema_cols):
         prob_result = resolve_prolly(unresolvable, schema_cols, prob_model)
@@ -230,7 +228,7 @@ def main():
 
     for i, batch in enumerate(batches, start=1):
         print(f"\n Batch {i}: {len(batch)} incoming rows \n")
-        result = run_batch(nebula, schema_cols, batch, static_invalid, args.max_identifiers, args.remap_type, phone_gap=True, scorer=scorer)
+        result = run_batch(nebula, schema_cols, batch, static_invalid, args.max_identifiers, args.remap_type, phone_gap=True)
         print(f"Batch clusters: {result['clusters']}\n")
         if result["invalid_declared"]:
             invalid_identifiers = pairs_to_static_invalid(result["invalid_declared"])

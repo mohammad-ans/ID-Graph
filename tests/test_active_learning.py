@@ -3,7 +3,7 @@ import sys, yaml
 import unittest
 from pathlib import Path
 
-MAIN_DIR = Path(__file__).resolve().parent.parent / "main"
+MAIN_DIR = Path(__file__).resolve().parent.parent / "src/identityresolver"
 sys.path.insert(0, str(MAIN_DIR))
 from graph_model import GraphRow
 from probability import FellegiSunterModel, resolve_prolly, pair_features

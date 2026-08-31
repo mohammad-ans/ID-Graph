@@ -5,7 +5,7 @@ import sys, importlib
 from pathlib import Path
 
 
-MAIN_DIR = Path(__file__).parent.parent / "main"
+MAIN_DIR = Path(__file__).parent.parent / "src/identityresolver"
 DEMO_DIR = Path(__file__).parent.parent / "demo"
 sys.path.insert(0, str(MAIN_DIR))
 sys.path.insert(0, str(DEMO_DIR))

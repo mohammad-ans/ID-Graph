@@ -2,7 +2,7 @@ import unittest
 import sys, hashlib, yaml, math
 from pathlib import Path
 
-MAIN_DIR = Path(__file__).resolve().parent.parent / "main"
+MAIN_DIR = Path(__file__).resolve().parent.parent / "src/identityresolver"
 sys.path.insert(0, str(MAIN_DIR))
 
 from probability import pair_features, FellegiSunterModel, blocking_key, generate_candidates, PoolRow, generate_cross_batch_candidates, group_auto_merging, resolve_prolly, should_refit, MIN_HISTORY, score_guest

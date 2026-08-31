@@ -9,13 +9,13 @@ from collections import defaultdict
 import psycopg2
 import psycopg2.extras
 from psycopg2.extensions import connection as _T_conn
-from config import NebulaConfig, PostgresConfig, SyncConfig
-from graph_model import GraphRow, row_to_ngql, belongs_to_identity, add_probable_identity, get_identities, vid, remap_identifiers_strict
-from nebula_client import NebulaClient
-from batch_id_union import cluster_identifiers, distinct_identifiers
-from probability import resolve_prolly, prolly_enabled, PoolRow, blocking_key, FellegiSunterModel, should_refit, score_guest, statements_reconciliation
-from active_learning import maybe_fit
-from supernode import SupernodeAnomalyScorer
+from .config import NebulaConfig, PostgresConfig, SyncConfig
+from .graph_model import GraphRow, row_to_ngql, belongs_to_identity, add_probable_identity, get_identities, vid, remap_identifiers_strict
+from .nebula_client import NebulaClient
+from .batch_id_union import cluster_identifiers, distinct_identifiers
+from .probability import resolve_prolly, prolly_enabled, PoolRow, blocking_key, FellegiSunterModel, should_refit, score_guest, statements_reconciliation
+from .active_learning import maybe_fit
+from .supernode import SupernodeAnomalyScorer
 import re
 import json
 

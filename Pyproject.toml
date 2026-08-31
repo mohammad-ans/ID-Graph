@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "identityresolver"
+version = "0.1.0"
+description = "An identity resolver over data by using an audience identity graph sync, uses(deterministic + probabilistic idnetity resolution over Nebula Graph)
+readme = "README.md"
+requires-python = ">=3.1.0"
+license = {text = "MIT"}
+authors = [
+    {name = "M. Ans", email="ansmuhammad340@gmail.com"}
+]
+keywords = ["identity-resolution", "nebula-graph", "identity-graph", "audience-graph"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "License :: OSI Approved :: MIT License",
+]
+dependencies = [
+    "psycopg2-binary>=2.9",
+    "PyYAML>=6.0",
+    "nebula3-python>=3.4",
+    "numpy>=1.24",
+]
+ 
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+
+[project.urls]
+HomePage = "https://github.com/mohammad-ans/ID-Graph"
+Repository = "https://github.com/mohammad-ans/ID-Graph"
+ 
+[project.scripts]
+identityresolver-sync = "identityresolver.sync_audience_graph:main"
+identityresolver-apply-schema = "identityresolver.apply_schema:main"
+identityresolver-review = "identityresolver.review:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+identityresolver = ["*.yaml", "*.ngql"]

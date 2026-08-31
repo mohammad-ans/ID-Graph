@@ -4,8 +4,8 @@ import argparse
 import logging
 import time, yaml
 from pathlib import Path
-from schema_gen import generate_schema_ngql
-from config import NebulaConfig
+from .schema_gen import generate_schema_ngql
+from .config import NebulaConfig
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)

@@ -1,9 +1,8 @@
 from logging import getLogger
 from dataclasses import dataclass, field
-from graph_model import GraphRow, get_role
+from .graph_model import GraphRow, get_role
 import datetime
 import hashlib
-from nebula_client import NebulaClient
 
 logger = getLogger(__name__)
 
