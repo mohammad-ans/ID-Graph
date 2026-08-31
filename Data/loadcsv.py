@@ -129,6 +129,7 @@ def main():
         with open(args.column_types) as file:
             column_types = json.load(file)
     conn = connect_postgres(PostgresConfig.from_env())
+    conn.cursor().execute(f"DROP SCHEMA {schema_name} CASCADE; CREATE SCHEMA {schema_name}")
     try:
         count = load_csv(conn, Path(args.csv), schema_name, table_name, column_types, args.primary_key)
         print(f"Loaded the csv successfully into the db with {count} rows")
