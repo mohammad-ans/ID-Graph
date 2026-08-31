@@ -63,16 +63,7 @@ def wait_for_host(session, storage_host: str, storage_port: int):
         time.sleep(HOST_ONLINE_RETRY_SECONDS)
     raise RuntimeError(f"Storage host {STORAGE_HOST}:{STORAGE_PORT} did not report ONLINE after {HOST_ONLINE_MAX_ATTEMPTS} attempts. Check logs for errors.")
 
-def initialize_nebula(
-    config: NebulaConfig,
-    storage_host: str = DEFAULT_STORAGE_HOST,
-    storage_port: int = DEFAULT_STORAGE_PORT,
-) -> None:
-    """Register the storage host and block until it reports ONLINE.
-
-    The storage host defaults to the ``storaged`` service name from the bundled
-    docker-compose file; pass your own when running against a real cluster.
-    """
+def initialize_nebula(config: NebulaConfig, storage_host: str = DEFAULT_STORAGE_HOST, storage_port: int = DEFAULT_STORAGE_PORT) -> None:
     pool = connect_retry(config)
     session = pool.get_session(config.username, config.password)
     try:
