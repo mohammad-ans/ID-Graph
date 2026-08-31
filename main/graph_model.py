@@ -338,7 +338,7 @@ def rules(identity_matches : dict[str, list[str]], transaction_dates : dict[str,
             
 
 
-def belongs_to_identity(identifier_identity_map : dict[str, str], cluster_map: dict, transaction_dates : dict[str, datetime.datetime] | None, max_identifiers : int, remap_type : int, schema_cols : dict, nebula : NebulaClient, scorer: SupernodeAnomalyScorer | None = None):
+def belongs_to_identity(identifier_identity_map : dict[str, str], cluster_map: dict, transaction_dates : dict[str, datetime.datetime] | None, max_identifiers : int, remap_type : int, schema_cols : dict, nebula : NebulaClient):
     statements = []
     invalid_identifiers_declare = []
     db_statements = []
@@ -378,10 +378,7 @@ def belongs_to_identity(identifier_identity_map : dict[str, str], cluster_map: d
             statements.extend(new_statements)
             statements.extend(attach_identifiers(new_identifiers, canonical_identity))
             total_identifiers += len(new_identifiers)
-        anomaly_result = None
-        if scorer is not None and schema_cols["signal_groups"] is not None:
-            anomaly_result = scorer.score(canonical_identity, nebula, schema_cols)
-        if total_identifiers > max_identifiers or (anomaly_result is not None and anomaly_result.is_anomalous):
+        if total_identifiers > max_identifiers:
             if schema_cols["signal_groups"] is None:
                 continue
             new_statements, new_invalid_identifiers_declare, new_db_statements = remap_identifiers_strict(canonical_identity, nebula, remap_type, schema_cols)

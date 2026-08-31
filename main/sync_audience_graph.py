@@ -10,11 +10,12 @@ import psycopg2
 import psycopg2.extras
 from psycopg2.extensions import connection as _T_conn
 from config import NebulaConfig, PostgresConfig, SyncConfig
-from graph_model import GraphRow, row_to_ngql, belongs_to_identity, add_probable_identity, get_identities, vid
+from graph_model import GraphRow, row_to_ngql, belongs_to_identity, add_probable_identity, get_identities, vid, remap_identifiers_strict
 from nebula_client import NebulaClient
 from batch_id_union import cluster_identifiers, distinct_identifiers
 from probability import resolve_prolly, prolly_enabled, PoolRow, blocking_key, FellegiSunterModel, should_refit, score_guest, statements_reconciliation
 from active_learning import maybe_fit
+from supernode import SupernodeAnomalyScorer
 import re
 import json
 
@@ -634,7 +635,8 @@ def sync_table(
     sync_config: SyncConfig,
     schema_cols: dict | None = None,
     cols_list: list[str] = [],
-    prob_model: FellegiSunterModel | None = None
+    prob_model: FellegiSunterModel | None = None,
+    scorer: SupernodeAnomalyScorer | None = None
 ) -> SyncResult:
     total = 0
     logger.info(
@@ -712,6 +714,17 @@ def sync_table(
         if count:
             logger.info("Reconciled %s probable_match identit%s with a deterministic identifier in %s", count, "y" if count == 1 else "ies", table_name)
         resolved = get_identities(batch, nebula)
+
+        for identity, method in resolved.values():
+            if method == "deterministic":
+                anomaly = scorer.score(identity, nebula, schema_cols)
+                if anomaly.is_anomalous:
+                    remap_statements, invalids, db_statements = remap_identifiers_strict(identity, nebula, sync_config.remap_type, schema_cols)
+                    write_identity_queries(nebula, remap_statements)
+                    if sync_config.remap_type == 3 and invalids:
+                        insert_invalid_identifiers(audit_conn, invalids, sync_config.schema_name)
+
+        resolved = get_identities(batch, nebula)
         insert_identities(audit_conn, resolved, sync_config.schema_name)
         mark_synced(audit_conn, graph_name, batch, sync_config.schema_name, sync_config.sync_table)
         total += len(batch)
@@ -774,6 +787,7 @@ def run_sync(
         sync_config.write_concurrency,
     )
     nebula = NebulaClient(nebula_config)
+    scorer = SupernodeAnomalyScorer()
     with connect_postgres(pg_config) as read_conn, connect_postgres(pg_config) as audit_conn:
         ensure_audit_table(audit_conn, sync_config.schema_name, sync_config.sync_table)
         ensure_log_tables(audit_conn, sync_config.schema_name)
@@ -799,13 +813,13 @@ def run_sync(
             
         if sync_config.dry_run:
             for table in table_list:
-                result = sync_table(read_conn, audit_conn, None, nebula_config.space, table, sync_config, schema_cols, cols_list, prob_model)
+                result = sync_table(read_conn, audit_conn, None, nebula_config.space, table, sync_config, schema_cols, cols_list, prob_model, scorer)
                 results[table] = result.rows_synced
             return results
 
         with NebulaClient(nebula_config) as nebula:
             for table in table_list:
-                result = sync_table(read_conn, audit_conn, nebula, nebula_config.space, table, sync_config, schema_cols, cols_list, prob_model)
+                result = sync_table(read_conn, audit_conn, nebula, nebula_config.space, table, sync_config, schema_cols, cols_list, prob_model, scorer)
                 logger.info("Finished %s: %s rows synced", result.table_name, result.rows_synced)
                 results[table] = result.rows_synced
 
