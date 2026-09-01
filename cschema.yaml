@@ -1,0 +1,67 @@
+identifiers:
+  - name: email
+    column: email
+    pre_hashed: true
+    edge_tag: has_email
+    include_in_belongs_to: true
+  - name: phone
+    column: phone
+    pre_hashed: true
+    edge_tag: has_phone
+    include_in_belongs_to: true
+  - name: twitter
+    column: twitter
+    pre_hashed: true
+    edge_tag: has_twitter
+    include_in_belongs_to: true
+  - name: linkedin
+    column: linkedin
+    pre_hashed: true
+    edge_tag: has_linkedin
+    include_in_belongs_to: true
+signal_groups:
+  - name: device_fingerprints
+    columns: [mac_address]
+    edge_tag: has_device_fingerprint
+  - name: network
+    columns: [ip_address]
+    edge_tag: has_network
+  - name: geo
+    columns: [location]
+    edge_tag: has_geo
+  - name: professsional
+    columns: [job_title, company, domain]
+    edge_tag: has_professional
+
+passthrough:
+  - name
+  - breached
+  - breach_source
+  - breach_year
+  - password_strength
+  - public_pastebin
+  - source_table
+record_id:
+  - record_id
+
+field_roles:
+  temporal:
+    source: attributes
+    column: breach_year
+  blocking_geo:
+    source: raw_signals
+    column: geo
+
+resolver:
+  - probabilistic: true
+probabilistic:
+  - auto_merge_threshold: 0.9
+  - review_threshold: 0.8
+  - active_learning_min_labels: 15
+  - fields:
+      mac_address: {m: 0.9, u: 0.01}
+      ip_address: {m: 0.75, u: 0.05}
+      job_title: {m: 0.5, u: 0.25}
+      company: {m: 0.6, u: 0.1}
+      domain: {m: 0.55, u: 0.15}
+      location: {m: 0.75, u: 0.08}

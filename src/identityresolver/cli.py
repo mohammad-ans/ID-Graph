@@ -111,7 +111,7 @@ def load_csv_command(csv_path: Path = typer.Option(..., "--csv", exists=True, di
     pg_config = postgres_config(env_file, db_url, db_host, db_port, db_name, db_user, db_password)
     types = json.loads(column_types.read_text(encoding="utf-8")) if column_types else None
     try:
-        count = load_csv_file(csv_path, schema_name, table, primary_key, pg_config, column_types, replace)
+        count = load_csv_file(csv_path, schema_name, table, primary_key, pg_config= pg_config, column_types=types, replace=replace)
     except ValueError as e:
         typer.secho(str(e), fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1) from e

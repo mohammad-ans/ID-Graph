@@ -6,8 +6,8 @@ Everything is done in **Python**. Docker compose is used to setup a cluster cont
 ## Journey and Learning
 The journey at the beginning of project was difficult as I was learning and then it got fine as I could also see results, test and everything. And I think the difficult part was joining the parts that I already knew to make this. Like except graph database, every operation I knew it but maybe at a smaller level. Like probabilities, mean, variance, union find, writing test, I knew all of that separately and maybe at a smaller level but then combining all of those concepts into making these, I had to research and read which is I hate, so that way of thinking like going deep somewhat. Ig what I want to say is this project helped me to learn how to research in a nutshell.
 ## Setup
+There is a docker compose file and requirements.txt in repository's root. You need to have python and docker(for real data setup only) installed to be able to run the project.
 ### Demo Running
-There is a docker compose file and requirements.txt in repository's root. You need to have python and docker installed to be able to run the project.
 - First of all clone the repository 
 ```bash
 git clone https://github.com/mohammad-ans/ID-Graph.git
@@ -22,45 +22,49 @@ bash shell.sh
 ```
 This will run the tests and a demo on the demo data.
 ### Run on a cluster with real Data
+This step is also considering that you are in the repository folder as you need the compose file and datasets.
 - Set up docker cluster.
 ```
 docker compose up -d
 ```
 Run it twice, and then wait for 20s as the pgadmin takes some time to start.
-- Now load any data you want in the postgres by going to Data folder like this
+- Install package
+```bash
+pip install identityresolver
 ```
-cd Data
-python loadcsv.py --csv dataset1.csv --table orders --schema-name orders --column-types data.json --primary-key record_id
+- And then first you need to load data in the postgres container using the cli as
+```
+identityresolver load-csv --csv ./Data/dataset1.csv --table orders --schema-name public --primary-key record_id --column-types ./Data/data.json --replace --env-file .env
 ```
 --csv option specifies the csv file to be loaded. In the repository there are two datasets. dataset1 and dataset2. If you want to add your own dataset, make sure it has a **primary key** and specify that in --primary-key instead of record_id and **source_table** column.
 --table specifies the table to be added the data inside. It **drops** the table first so all data inside it is removed. If you want to change that, you can comment the drop line in the loadcsv.py file
 --schema-name is just the name of postgres schema in which all data is stored, you can skip that as it is stored in the .env file too to make it consistent accross everything.
 --column-types is a json file that specifies the postgres datatype of columns, by default it is written as text
 --primary-key is the primary key field in the csv table.
+--env-file is the .env file which has default values and passwords for the cluster setted up.
 
 - Now you have to initialize the nebula schema
 ```
-    cd ..
-    cd main
-    python initialize_nebula.py
+    identityresolver init-nebula --env-file .env
 ```
-Make sure it says initialization complete otherwise rerun the initialize_nebula.py
+Make sure it says initialization complete otherwise rerun the command.
 - Run apply schema
 ```
-    python apply_schema.py --schema-yaml cschema.yaml
+    identityresolver apply-schema --env-file .env --column-schema cschema.yaml
 ```
 Here the end cschema file is for the datasets1 and datasets2. If you want to add your dataset you would have to change the schema file or create a new file and provide it.
-- Now you can run the main sync file
+- Now you can run the main sync
 ```
-    python sync_audience_graph.py --tables orders --schema-name public --phone-gap --sync-table audit_table
+    identityresolver sync --env-file=.env --tables=orders --column-schema=cschema.yaml --schema-name=public
 ```
 --table for the postgres table in which data is stored. You can also specifiy more than one tables here
+--column-schema is the schema file
 --schema-name is the postgres schema name in which tables are stored and new tables for logs, audit, review queues, and the final identity table.
 --phone-gap specifies if you want to track phone gap, you can edit the phone gap's value in graph_model file. Phone gap specifies after how many days two records phone are said to be unrelated
 --sync-table is the name of the audit table
 --dry-run is an option that you can specify to dry run instead of writing back anything to nebula or postgres. Like this:
 ```
-    python sync_audience_graph.py --tables orders --schema-name public --phone-gap --dry-run --sync-table audit_table
+    identityresolver sync --env-file=.env --tables=orders --column-schema=cschema.yaml --schema-name=public --dry-run
 ```
 These were the main options. Other options for modifying the behaviour are
 --batch-size the number of rows to be processed in the identity resolution pipeline at a time.
@@ -68,6 +72,8 @@ These were the main options. Other options for modifying the behaviour are
 --remap-type specifies when identity is broken during strict remapping, what happens to identifier if they coexist in more than one cluster. 1(default) specifies to attach it randomly to whichever appears first while iterating. 2 specifies attach it to the cluster in which it occurs the most. 3 is to mark it invalid and consider it invalid if it appears later anywhere by saving it to the database.
 --max-records specify the max records to process in a single run. If a table has more unprocessed rows than this, it is capped at max records.
 --max-transactions checks the database for any identifier that exists in more than max transaction rows and marks it invalid.
+
+ **You can see additional options by typing --help in front of any command**
 
 If you do not want to pass these extra fields, defaults have been given in .env file and they are read from there, and you can modify there too without having to specify everything at run time. But runtime argument has priority over .env.
 
@@ -102,8 +108,8 @@ Where 888 and 44 were just an example taken, you can take group of any two rows 
 You can leave the step of loading data, and in .env provide all the details for your postgres connection, schema name, host, user, password, tables and then it would use your postgres.
 You can delete the postgres containers in docker compose entirely or let them be, as there is no need for it now.
 ## Structure of repository
-```/Data``` folder contains two datasets and loadcsv.py to load data to postgres from a csv file, such as the two datasets
-```/main``` is the core folder having all the core files containing algorithms, schema, nebula client
+```/Data/``` folder contains two datasets for loading in postgres for testing purposes.
+```/identityresolver/src/``` is the core folder having all the core files containing algorithms, schema, nebula client
 ```/demo``` is the folder containing a demo run, demo dataset
 ```/testing``` contains the python tests to ensure that nothing is broken. Those are not very strong but they can detect most of the errors in main funciton especially if u change structure of any function.
 The main root contains the docker compose file, shell.sh to run tests and the demo run.
@@ -116,5 +122,14 @@ The super node are identified by default know invalid identifiers, max identifie
 The active learning is still in progress like I myself have not any specific guides yet on how to train the model on basis of data but if we take the code side and current data sets, it works fine for them.
 Testing cannot still be fully relied on as I did not write tests about postgres and nebula queries so they still fail if I tweak some changes and find those errors in real running.
 The blocking of candidates into probabilistic pairs is done on basis of country and transaction date which fails for other schema so that is **not implemented.**
+Specifying db url in options does not works yet.
 ### AI Usage
-AI was used in beginning to help me setup nebula and then afterwards in my demo run to generate data, I provided the conditions and it just generated the data that met those conditions. It was used for debugging and I took its help in researching, like understanding other's work. I also took its helping in learning yaml and docker compose structure but I applied it myself.
+AI was used in beginning to help me setup nebula and then afterwards in my demo run to generate data, I provided the conditions and it just generated the data that met those conditions. It was used for debugging and I took its help in researching, like understanding other's work. I also took its helping in learning yaml and docker compose structure but I applied it myself. AI was also used to generate the license document and as a helping tool in creating pypi release of the package that is everything was already there, it just helped to restructure in it.
+## Images
+![Load Data](./loaddata.png)
+![Initialize nebula](./initliazenebula.png)
+![Apply Schema](./applyschema.png)
+![Run Sync](./syncdata.png)
+![Running sync if all data is already synced](./syncnodata.png)
+![Help Show](./helpoption.png)
+![Help Show 2](./helpoption2.png)
