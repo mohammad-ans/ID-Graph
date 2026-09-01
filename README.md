@@ -30,7 +30,7 @@ docker compose up -d
 Run it twice, and then wait for 20s as the pgadmin takes some time to start.
 - Install package
 ```bash
-pip install identityresolver
+pip install identityresolver-dev
 ```
 - And then first you need to load data in the postgres container using the cli as
 ```
