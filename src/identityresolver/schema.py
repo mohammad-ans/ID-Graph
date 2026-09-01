@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 import yaml
 
-__all__ = ["SchemaError", "load_schema", "validate_schema", "souce_columns", "signal_columns", "identifier_names", "merge_identifier_names", "feature_names", "field_role", "probabilistic_config", "prolly_enabled", "phone_gap_days", "TIME_SLOTS"]
+__all__ = ["SchemaError", "load_schema", "validate_schema", "souce_columns", "signal_columns", "identifier_names", "merge_identifier_names", "features_names", "field_role", "probabilistic_config", "prolly_enabled", "phone_gap_days", "TIME_SLOTS"]
 TIME_SLOTS = (
     ("temporal_same_day", 1),
     ("temporal_same_week", 7),

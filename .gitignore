@@ -1,2 +1,7 @@
 __pycache__/
 .env
+dist/
+build/
+dist/
+*.egg-info/
+/test_env

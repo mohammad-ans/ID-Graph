@@ -4,8 +4,8 @@ from pathlib import Path
 from typing import Optional
 
 from . import __version__
-from .config import ConfigError, NebulaConfig, PostgresConfig, load_dotenv_file
-from .schema import SchemaError, load_schema
+from .config import ConfigError, NebulaConfig, PostgresConfig, SyncConfig, load_dotenv_file
+from .schema import SchemaError, load_schema, prolly_enabled, source_columns
 
 app = typer.Typer(name="identityresolver", help="Deterministic and probabilistc identity resolution over Nebula Graph", no_args_is_help=True, add_completion=False)
 
@@ -116,3 +116,84 @@ def load_csv_command(csv_path: Path = typer.Option(..., "--csv", exists=True, di
         typer.secho(str(e), fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1) from e
     typer.secho(f"Loaded {count} rows into {schema_name}.{table}",fg=typer.colors.GREEN)
+
+@app.command("sync")
+def sync_command(
+    tables: str = typer.Option(..., "--tables", help="Comma-separated source table names."),
+    column_schema: Path = typer.Option(..., "--column-schema", exists=True, dir_okay=False, help="Column schema YAML describing your data.",),
+    schema_name: str = typer.Option(..., "--schema-name", help="Postgres schema holding the source and audit tables."),
+    sync_table: str = typer.Option("graph_sync_audit", "--sync-table", help="Audit table tracking processed records."),
+    batch_size: Optional[int] = typer.Option(None, "--batch-size"),
+    max_records: Optional[int] = typer.Option(None, "--max-records"),
+    max_identifiers: Optional[int] = typer.Option(None, "--max-identifiers"),
+    max_transactions: Optional[int] = typer.Option(None, "--max-transactions"),
+    write_concurrency: Optional[int] = typer.Option(None, "--write-concurrency"),
+    remap_type: Optional[int] = typer.Option(None, "--remap-type", help="1 first-cluster wins, 2 most-frequent cluster wins, 3 mark invalid and persist.",),
+    phone_gap: bool = typer.Option(False, "--phone-gap", help="Apply the phone recency rule."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Log what would be written without touching Nebula or Postgres."),
+    env_file: Optional[Path] = EnvFile, db_url: Optional[str] = DbUrl, db_host: Optional[str] = DbHost,db_port: Optional[int] = DbPort,db_name: Optional[str] = DbName, db_user: Optional[str] = DbUser, db_password: Optional[str] = DbPass,nebula_host: Optional[str] = NebulaHost, nebula_port: Optional[int] = NebulaPort, nebula_user: Optional[str] = NebulaUser, nebula_password: Optional[str] = NebulaPass, space: Optional[str] = NebulaSpace, verbose: bool = Verbose) -> None:
+    setup_logging(verbose)
+    from .sync_audience_graph import run_sync
+
+    schema_cols = load_schema_exit(column_schema)
+    pg_config = postgres_config(env_file, db_url, db_host, db_port, db_name, db_user, db_password)
+    n_config = nebula_config(env_file, nebula_host, nebula_port, nebula_user, nebula_password, space)
+
+    try:
+        base = SyncConfig.from_env()
+    except ConfigError:
+        base = SyncConfig(schema_name=schema_name, sync_table=sync_table)
+
+    sync_config = base.merged( schema_name=schema_name, sync_table=sync_table, batch_size=batch_size, max_records=max_records, max_identifiers=max_identifiers, max_transactions=max_transactions, write_concurrency=write_concurrency, remap_type=remap_type, phone_gap=phone_gap or None, dry_run=dry_run or None,)
+
+    results = run_sync(tables=tables, schema_cols=schema_cols, pg_config=pg_config, nebula_config=n_config, sync_config=sync_config,)
+
+    for table, rows in results.items():
+        typer.secho(f"{table}: {rows} rows synced", fg=typer.colors.GREEN)
+
+
+@app.command("review")
+def review_command(
+    column_schema: Path = typer.Option(..., "--column-schema", exists=True, dir_okay=False, help="Column schema YAML describing your data.",),
+    schema_name: str = typer.Option(..., "--schema-name"),
+    source_table: str = typer.Option(..., "--source-table", help="Table holding the original records, for display."),
+    review_table: str = typer.Option("identity_review_queue", "--review-table"),
+    limit: int = typer.Option(10, "--limit", help="How many candidate pairs to review."),
+    env_file: Optional[Path] = EnvFile, db_url: Optional[str] = DbUrl, db_host: Optional[str] = DbHost, db_port: Optional[int] = DbPort, db_name: Optional[str] = DbName, db_user: Optional[str] = DbUser, db_password: Optional[str] = DbPass, verbose: bool = Verbose,) -> None:
+    setup_logging(verbose)
+    from .postgres import connect_postgres
+    from .review import review_candidates
+
+    schema_cols = load_schema_exit(column_schema)
+    if not prolly_enabled(schema_cols):
+        typer.secho("Probabilistic resolution is disabled in this column schema, so the review queue is never populated.", fg=typer.colors.YELLOW,)
+        raise typer.Exit(code=1)
+
+    pg_config = postgres_config(env_file, db_url, db_host, db_port, db_name, db_user, db_password)
+    with connect_postgres(pg_config) as conn:
+        total = review_candidates(conn, schema_cols, schema_name=schema_name, source_table=source_table, review_table=review_table, limit=limit)
+    typer.secho(f"Recorded {total} decisions", fg=typer.colors.GREEN)
+
+
+@app.command("check-schema")
+def check_schema_command(column_schema: Path = typer.Argument(..., exists=True, dir_okay=False),) -> None:
+    schema_cols = load_schema_exit(column_schema)
+    typer.secho(f"{column_schema} is valid", fg=typer.colors.GREEN)
+    typer.echo(f"Source columns:  {', '.join(source_columns(schema_cols))}")
+    typer.echo(f"Probabilistic:   {prolly_enabled(schema_cols)}")
+    if prolly_enabled(schema_cols):
+        from .schema import feature_names
+
+        typer.echo(f"Scored features: {', '.join(feature_names(schema_cols))}")
+
+
+def main() -> None:
+    try:
+        app()
+    except (ConfigError, SchemaError) as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()

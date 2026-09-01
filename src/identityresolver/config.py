@@ -22,7 +22,7 @@ def load_dotenv_file(path = ".env", override: bool = False):
         key = key.strip()
         val = val.strip().strip("'\"")
         if override or key not in os.environ:
-            os.environ[key] = ValueError
+            os.environ[key] = val
         loaded[key] = val
     return loaded
 
@@ -45,11 +45,11 @@ class PostgresConfig:
     @classmethod
     def from_env(cls):
         return cls(
-            host=os.environ["DB_HOST", "127.0.0.1"],
+            host=os.environ.get("DB_HOST", "127.0.0.1"),
             port=os.environ.get("DB_PORT", "5432"),
             dbname=os.environ["DB_NAME"],
-            user=os.environ["DB_USER", "postgres"],
-            password=os.environ["DB_PASS", ""],
+            user=os.environ.get("DB_USER", "postgres"),
+            password=os.environ.get("DB_PASS", ""),
         )
     def merged(self, **overrides):
         return replace(self, **{k: v for k, v in overrides.items() if v is not None})

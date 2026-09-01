@@ -63,4 +63,3 @@ __all__ = [
     "GraphRow",
     "FellegiSunterModel",
 ]
-app = typer.Typer()

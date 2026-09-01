@@ -6,7 +6,7 @@ from datetime import datetime
 import numpy
 from .graph_model import GraphRow, record_vid, update_vertex, get_role
 from .active_learning import LogisticClassifier, score as al_score
-from .schema import TIME_SLOTS, feature_names, field_role_column, probabilistic_config as parse_config, prolly_enabled, signal_columns
+from .schema import TIME_SLOTS, features_names, field_role_column, probabilistic_config as parse_config, prolly_enabled, signal_columns
 
 def parse_date(value: str | None) -> datetime | None:
     if not value:
@@ -46,11 +46,11 @@ DEFAULT_MU = (0.6, 0.2)
 
 
 def field_order(schema_cols) -> list[str]:
-    return list(feature_names(schema_cols))
+    return list(features_names(schema_cols))
 
 
 def build_priors(schema_cols):
-    priors = {name: DEFAULT_MU for name in feature_names(schema_cols)}
+    priors = {name: DEFAULT_MU for name in features_names(schema_cols)}
     for name, val in (parse_config(schema_cols).get("fields") or {}).items():
         priors[name] = (float(val["m"]), float(val["u"]))
     return priors

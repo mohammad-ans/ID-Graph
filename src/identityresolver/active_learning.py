@@ -4,7 +4,7 @@ import logging
 import math
 from dataclasses import dataclass
 import numpy
-from .schema import feature_names as _field_names
+from .schema import features_names as _field_names
 from .schema import probabilistic_config as parse_config
 
 logger = logging.getLogger(__name__)
