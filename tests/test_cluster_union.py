@@ -3,18 +3,19 @@ import sys, yaml, hashlib
 import unittest
 from pathlib import Path
 
-MAIN_DIR = Path(__file__).resolve().parent.parent / "src/identityresolver"
+import identityresolver.presets
+
+PRESETS = Path(next(iter(identityresolver.presets.__path__)))
 DEMO_DIR = Path(__file__).resolve().parent.parent / "demo"
 
-sys.path.insert(0, str(MAIN_DIR))
 sys.path.insert(0, str(DEMO_DIR))
 
-from cluster_union_strict import UnionFind, generate_pairs, is_identifier_check, cluster_identifiers_strict
+from identityresolver.cluster_union_strict import UnionFind, generate_pairs, is_identifier_check, cluster_identifiers_strict
 from nebula_f import FakeNebulaClient
-from graph_model import GraphRow, row_to_ngql, vid, add_identity
+from identityresolver.graph_model import GraphRow, row_to_ngql, vid, add_identity
 
 def load_schema_cols():
-    with open(MAIN_DIR / "schema.yaml") as file:
+    with open(PRESETS / "schema.yaml") as file:
         return yaml.safe_load(file)
 
 def build_row(record_id, email=None, phone=None, screen_width="1000", city="New York"):

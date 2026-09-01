@@ -3,15 +3,17 @@ import sys, yaml
 import unittest
 from pathlib import Path
 
-MAIN_DIR = Path(__file__).resolve().parent.parent / "src/identityresolver"
-sys.path.insert(0, str(MAIN_DIR))
-from graph_model import GraphRow
-from probability import FellegiSunterModel, resolve_prolly, pair_features
-from active_learning import FEATURES, logistic_regression, _field_names
+import identityresolver.presets
+
+PRESETS = Path(next(iter(identityresolver.presets.__path__)))
+
+from identityresolver.graph_model import GraphRow
+from identityresolver.probability import FellegiSunterModel, resolve_prolly, pair_features
+from identityresolver.active_learning import logistic_regression, _field_names
 
 
 def load_schema_cols():
-    with open(MAIN_DIR / "schema.yaml") as file:
+    with open(PRESETS / "schema.yaml") as file:
         return yaml.safe_load(file)
 
 def build_row(record_id, date, merchant, screen_width, screen_length, country, city, language):
@@ -23,7 +25,7 @@ def build_row(record_id, date, merchant, screen_width, screen_length, country, c
 class ResolveProllyIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.schema_cols = load_schema_cols()
-        self.model = FellegiSunterModel()
+        self.model = FellegiSunterModel.schema_mu_probs(self.schema_cols)
         self.field_names = _field_names(self.schema_cols)
         self.rows = [build_row("r1", "2026-01-01T00:00:00", "New York", "1440", "900", "us", "Austin", "en-US"),
                      build_row("r2", "2026-01-01T00:00:00", "New York", "1440", "900", "us", "Austin", "en-US")]
@@ -36,8 +38,9 @@ class ResolveProllyIntegrationTests(unittest.TestCase):
         self.assertAlmostEqual(score, direct_score)
 
     def test_uses_classifier_score(self):
-        agree_all = {name: True for name in FEATURES}
-        agree_none = {name: False for name in FEATURES}
+        features = self.field_names
+        agree_all = {name: True for name in features}
+        agree_none = {name: False for name in features}
         classifier = logistic_regression([(agree_all, 1), (agree_none, 0)] * 10, field_names=self.field_names)
         result1 = resolve_prolly(self.rows, self.schema_cols, self.model, classifier=None)
         result2 = resolve_prolly(self.rows, self.schema_cols, self.model, classifier=classifier)

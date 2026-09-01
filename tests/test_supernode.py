@@ -4,18 +4,19 @@ import yaml, hashlib, statistics, datetime
 import sys, importlib
 from pathlib import Path
 
+import identityresolver.presets
 
-MAIN_DIR = Path(__file__).parent.parent / "src/identityresolver"
+
+PRESETS = Path(next(iter(identityresolver.presets.__path__)))
 DEMO_DIR = Path(__file__).parent.parent / "demo"
-sys.path.insert(0, str(MAIN_DIR))
 sys.path.insert(0, str(DEMO_DIR))
 
-from graph_model import GraphRow, row_to_ngql, vid, add_identity
-from supernode import OnlineStats, shanon_entropy, temporal_burst_score, fetch_cluster_snapshot, compute_features, SupernodeAnomalyScorer, MIN_POPULATION
+from identityresolver.graph_model import GraphRow, row_to_ngql, vid, add_identity
+from identityresolver.supernode import OnlineStats, shanon_entropy, temporal_burst_score, fetch_cluster_snapshot, compute_features, SupernodeAnomalyScorer, MIN_POPULATION
 from nebula_f import FakeNebulaClient
 
 def load_schema():
-    with open(MAIN_DIR / "schema.yaml") as file:
+    with open(PRESETS / "schema.yaml") as file:
         return yaml.safe_load(file)
 
 def build_row(record_id, email=None, phone=None, transaction_date="2026-01-01T00:00:00", merchant_name="abc", screen_width="1000", screen_length="800", ip_country="us", city="New York", language="en-US"):

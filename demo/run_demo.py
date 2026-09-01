@@ -4,20 +4,21 @@ import logging
 import sys
 from pathlib import Path
 
-MAIN_DIR = Path(__file__).resolve().parent.parent / "src/identityresolver"
+import identityresolver.presets
+
+PRESETS = Path(next(iter(identityresolver.presets.__path__)))
 DEMO_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(MAIN_DIR))
 sys.path.insert(0, str(DEMO_DIR))
 
 import yaml
 from nebula_f import FakeNebulaClient
 from dummy_data import build_batches, build_showcase_rows, make_rows, SCHEMA_COLS
-import active_learning as al
-from graph_model import GraphRow, belongs_to_identity,  add_probable_identity, vid as graph_vid, row_to_ngql, add_identity
-from batch_id_union import cluster_identifiers, distinct_identifiers
-from sync_audience_graph import fetch_identities, write_batch, write_identity_queries
-from probability import prolly_enabled, resolve_prolly,  pair_features, FellegiSunterModel
-from supernode import SupernodeAnomalyScorer
+from identityresolver import active_learning as al
+from identityresolver.graph_model import GraphRow, belongs_to_identity,  add_probable_identity, vid as graph_vid, row_to_ngql, add_identity
+from identityresolver.batch_id_union import cluster_identifiers, distinct_identifiers
+from identityresolver.sync_audience_graph import fetch_identities, write_batch, write_identity_queries
+from identityresolver.probability import prolly_enabled, resolve_prolly,  pair_features, FellegiSunterModel
+from identityresolver.supernode import SupernodeAnomalyScorer
 from fake_pg import Cursor, ReviewQueue
 
 
@@ -28,7 +29,7 @@ RECORD_LABELS = {
 }
 
 def load_schema_cols():
-    with open(MAIN_DIR / "schema.yaml") as f:
+    with open(PRESETS / "schema.yaml") as f:
         return yaml.safe_load(f)
 
 def build_cols_list(schema_cols: dict):
@@ -215,7 +216,7 @@ def main():
     logging.getLogger().setLevel(logging.WARNING)
     schema_cols = load_schema_cols()
     batches = build_batches()
-    nebula = FakeNebulaClient(schema_path=str(MAIN_DIR / "schema.ngql"))
+    nebula = FakeNebulaClient(schema_path=str(PRESETS / "schema.ngql"))
 
     print("=" * 72)
     print("RampID-style identity graph -- live demo (in-memory styled Nebula)")
@@ -316,7 +317,7 @@ def main():
     print("=" * 72)
     print("Active learning using review queue")
     print("=" * 72)
-    model = FellegiSunterModel()
+    model = FellegiSunterModel.schema_mu_probs(schema_cols)
     conn = ReviewQueue()
     rows = make_rows()
     print("Score every candidate pair with Fellegi Sunter")

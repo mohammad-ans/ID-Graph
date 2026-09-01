@@ -1,6 +1,6 @@
 from __future__ import annotations
 import hashlib
-from graph_model import GraphRow
+from identityresolver.graph_model import GraphRow
 def sha256_text(value: str):
     return hashlib.sha256(value.strip().lower().encode("utf-8")).hexdigest()
 

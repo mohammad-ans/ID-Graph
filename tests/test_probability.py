@@ -2,14 +2,15 @@ import unittest
 import sys, hashlib, yaml, math
 from pathlib import Path
 
-MAIN_DIR = Path(__file__).resolve().parent.parent / "src/identityresolver"
-sys.path.insert(0, str(MAIN_DIR))
+import identityresolver.presets
 
-from probability import pair_features, FellegiSunterModel, blocking_key, generate_candidates, PoolRow, generate_cross_batch_candidates, group_auto_merging, resolve_prolly, should_refit, MIN_HISTORY, score_guest
-from graph_model import GraphRow
+PRESETS = Path(next(iter(identityresolver.presets.__path__)))
+
+from identityresolver.probability import pair_features, FellegiSunterModel, blocking_key, generate_candidates, PoolRow, generate_cross_batch_candidates, group_auto_merging, resolve_prolly, should_refit, MIN_HISTORY, score_guest
+from identityresolver.graph_model import GraphRow
 
 def load_schema():
-    with open(MAIN_DIR / "schema.yaml") as file:
+    with open(PRESETS / "schema.yaml") as file:
         return yaml.safe_load(file)
 
 def build_row(record_id, email=None, phone=None, transaction_date="2026-01-01T00:00:00", merchant_name="M", screen_width="390", screen_length="390", ip_country="us", city="New York", language="en-US"):
@@ -65,8 +66,8 @@ class TestPairFeatures(unittest.TestCase):
 
 class TestFellegiSunterModel(unittest.TestCase):
     def setUp(self):
-        self.model = FellegiSunterModel()   
         self.schema = load_schema()
+        self.model = FellegiSunterModel.schema_mu_probs(self.schema)
 
     def test_no_agreement(self):
         a = GraphRow.from_db_row(build_row(record_id="r1"), self.schema)
@@ -211,8 +212,8 @@ class TestResolveProbabilistically(unittest.TestCase):
 
 class TestFitEm(unittest.TestCase):
     def setUp(self):
-        self.model = FellegiSunterModel()
         self.schema = load_schema()
+        self.model = FellegiSunterModel.schema_mu_probs(self.schema)
     def test_fitem_empty_history(self):
         before = dict(self.model.m_probs)
         self.model.fit_em([])
@@ -232,7 +233,7 @@ class TestFitEm(unittest.TestCase):
             self.assertTrue(0.0 <= v <= 1.0)
             self.assertFalse(math.isnan(v))
     def test_fitem_no_literal_zero_one(self):
-        self.model = FellegiSunterModel()
+        self.model = FellegiSunterModel.schema_mu_probs(self.schema)
         rows = [GraphRow.from_db_row(build_row(f"r{i}"), self.schema) for i in range(10)]
         features = []
         for i in range(9):

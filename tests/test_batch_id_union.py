@@ -3,14 +3,15 @@ import sys, yaml
 import unittest
 from pathlib import Path
 
-MAIN_DIR = Path(__file__).resolve().parent.parent / "src/identityresolver"
-sys.path.insert(0, str(MAIN_DIR))
+import identityresolver.presets
 
-from batch_id_union import UnionFind, cluster_identifiers, distinct_identifiers, InvalidIdentifiers, parse_date, valid_identifiers
-from graph_model import GraphRow
+PRESETS = Path(next(iter(identityresolver.presets.__path__)))
+
+from identityresolver.batch_id_union import UnionFind, cluster_identifiers, distinct_identifiers, InvalidIdentifiers, parse_date, valid_identifiers
+from identityresolver.graph_model import GraphRow
 
 SCHEMA_COLS = None
-with open(MAIN_DIR / "schema.yaml") as file:
+with open(PRESETS / "schema.yaml") as file:
     SCHEMA_COLS = yaml.safe_load(file)
 
 def row(record_id, email=None, phone=None, transaction_date=None):
